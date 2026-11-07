@@ -82,6 +82,7 @@ export interface ObserveResponse {
   reactions: ReactionProposal[];
   nextCaptureAt: number | null;
   final: boolean;
+  maxFrames?: number; // effective frame limit for this Short
   belief?: { topic: string; happening: string; confidence: number; emotionArc: string[] };
   error?: string;
 }

@@ -40,7 +40,10 @@ export interface EngineOptions {
 
 export const COOLDOWN_MS: Record<Frequency, number> = { rare: 45_000, balanced: 20_000, chatty: 12_000 };
 export const MIN_IMPORTANCE: Record<Frequency, number> = { rare: 0.75, balanced: 0.55, chatty: 0.4 };
-export const MAX_PER_SHORT: Record<Frequency, number> = { rare: 1, balanced: 1, chatty: 2 };
+// No limit on comments per Short for now (frequency still sets the importance bar and the gap).
+export const MAX_PER_SHORT: Record<Frequency, number> = { rare: Infinity, balanced: Infinity, chatty: Infinity };
+/** Minimum gap between any two bubbles, so a new one doesn't replace one still being read. */
+export const SAME_SHORT_GAP_MS: Record<Frequency, number> = { rare: 8_000, balanced: 5_000, chatty: 3_500 };
 export const FAST_SCROLL = { count: 3, windowMs: 6_000 };
 export const LOOP_GAP_MS = 2_500;
 export const END_GAP_S = 1.2;
@@ -91,6 +94,7 @@ export interface Delivery {
 
 interface EngineMemory {
   lastSpokeAt: number | null;
+  lastSpokeVideo: string | null;
   deliveredTexts: Set<string>;
   deliveredPerVideo: Map<string, number>;
 }
@@ -156,12 +160,15 @@ export function decide(
       ? v('SAVE_FOR_LATER', 'fast_scroll', 'user is scrolling fast: saving the callback')
       : v('WAIT', 'fast_scroll', 'user is scrolling fast');
 
-  const cooldown = COOLDOWN_MS[opts.frequency];
+  // Comments aren't limited for now: only a short reading gap between bubbles (COOLDOWN_MS is kept for later).
+  const sameShort = mem.lastSpokeVideo !== null && mem.lastSpokeVideo === s.videoId;
+  const cooldown = SAME_SHORT_GAP_MS[opts.frequency];
   if (mem.lastSpokeAt !== null && now - mem.lastSpokeAt < cooldown) {
     const left = Math.ceil((cooldown - (now - mem.lastSpokeAt)) / 1000);
+    const what = sameShort ? 'gap between comments' : 'cooldown';
     return c.isCallback && !onScreen
-      ? v('SAVE_FOR_LATER', 'cooldown', `cooldown (${left}s left): saving the callback`)
-      : v('WAIT', 'cooldown', `cooldown (${left}s left)`);
+      ? v('SAVE_FOR_LATER', 'cooldown', `${what} (${left}s left): saving the callback`)
+      : v('WAIT', 'cooldown', `${what} (${left}s left)`);
   }
 
   const gap = naturalGap(s, now);
@@ -175,9 +182,10 @@ export function decide(
   // Mid-playback from here on.
   if (!onScreen) return v('SAVE_FOR_LATER', 'callback_saved', 'callback saved for the next natural gap');
 
-  if (c.preferredTiming === 'now' && c.importance >= 0.9 && !c.requiresQuietMoment && s.currentTime >= 2) {
+  // Live comments: a 'now' line that already cleared this frequency's importance bar may show mid-video.
+  if (c.preferredTiming === 'now' && !c.requiresQuietMoment && s.currentTime >= 2) {
     const nearKey = (c.avoidTimes ?? []).some((t) => Math.abs(t - s.currentTime) < KEY_MOMENT_S);
-    if (!nearKey) return v('SPEAK_NOW', 'urgent', 'time-sensitive and important: silent bubble mid-playback', 'bubble');
+    if (!nearKey) return v('SPEAK_NOW', 'live', 'live comment: silent bubble mid-playback', 'bubble');
     return v('WAIT', 'key_moment', 'would cover a key moment');
   }
 
@@ -187,7 +195,7 @@ export function decide(
 export class TimingEngine {
   queue: Candidate[] = [];
   log: DecisionLogEntry[] = [];
-  private mem: EngineMemory = { lastSpokeAt: null, deliveredTexts: new Set(), deliveredPerVideo: new Map() };
+  private mem: EngineMemory = { lastSpokeAt: null, lastSpokeVideo: null, deliveredTexts: new Set(), deliveredPerVideo: new Map() };
   private lastCode = new Map<string, string>();
 
   constructor(public opts: EngineOptions) {}
@@ -215,6 +223,7 @@ export class TimingEngine {
       if (verdict.decision === 'SPEAK_NOW') {
         delivered = { candidate: c, mode: verdict.mode ?? 'bubble', reason: verdict.reason };
         this.mem.lastSpokeAt = now;
+        this.mem.lastSpokeVideo = s.videoId;
         this.mem.deliveredTexts.add(normalizeText(c.text));
         if (s.videoId) this.mem.deliveredPerVideo.set(s.videoId, (this.mem.deliveredPerVideo.get(s.videoId) ?? 0) + 1);
       } else if (verdict.decision === 'WAIT' || verdict.decision === 'SAVE_FOR_LATER') {
@@ -241,7 +250,7 @@ export class TimingEngine {
     this.queue = [];
     this.log = [];
     this.lastCode.clear();
-    this.mem = { lastSpokeAt: null, deliveredTexts: new Set(), deliveredPerVideo: new Map() };
+    this.mem = { lastSpokeAt: null, lastSpokeVideo: null, deliveredTexts: new Set(), deliveredPerVideo: new Map() };
   }
 
   hasPending(): boolean {
@@ -252,7 +261,7 @@ export class TimingEngine {
     const key = `${verdict.decision}:${verdict.code}`;
     if (!force && this.lastCode.get(c.id) === key) return; // log changes, not every tick
     this.lastCode.set(c.id, key);
-    const cooldown = COOLDOWN_MS[this.opts.frequency];
+    const cooldown = SAME_SHORT_GAP_MS[this.opts.frequency];
     this.log.push({
       t: now,
       reactionId: c.id,

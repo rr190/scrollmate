@@ -546,7 +546,8 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
         else:
             path = (f"race won by {winner}" if config.RACE_VISION else winner) if winner else "vision FAILED (see server log)"
 
-    out = ObserveResponse(belief=b, record=_record(b))
+    max_frames = min(req.max_frames, config.frames_for(req.duration))
+    out = ObserveResponse(belief=b, record=_record(b), max_frames=max_frames)
     if raw is not None and not await request.is_disconnected():
         conf = raw.confidence if req.frame else min(raw.confidence, 0.5)
         prev_topic = b.topic
@@ -575,14 +576,17 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
         if level >= 2 and raw.line:
             text = " ".join(raw.line.split())
             if safe(text):
+                # Level 2-3 lines show mid-video as a short silent bubble (live comments). Level 3 ranks higher;
+                # level 2 (0.65) clears Balanced/Chatty but not Rare, so frequency still matters.
+                strong = level == 3
                 out.reactions.append(
                     ReactionCandidate(
                         text=text,
-                        importance=0.9 if level == 3 else 0.6,
+                        importance=0.92 if strong else 0.65,
                         target_video_id=req.video_id,
-                        preferred_timing="after_video",
-                        expires_after_seconds=60 if raw.line_is_callback else 25,
-                        requires_quiet_moment=True,
+                        preferred_timing="now",
+                        expires_after_seconds=60 if raw.line_is_callback else 8,
+                        requires_quiet_moment=False,
                         is_callback=raw.line_is_callback,
                     )
                 )
@@ -590,19 +594,23 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
                 feed.publish("reaction_blocked", videoId=req.video_id, text=text)
 
         nxt = raw.next_look_at
-        if nxt is None and req.frame_index == 1 and req.max_frames > 1 and req.duration > 6:
-            # One frame is rarely enough to judge a Short: look again halfway through what's left.
-            nxt = req.frame_time + (req.duration - req.frame_time) / 2
+        frames_left = max_frames - req.frame_index
+        even = (req.duration - req.frame_time) / (frames_left + 1) if (req.duration and frames_left > 0) else None
+        if nxt is None and even and req.frame_index < (max_frames + 1) // 2:
+            # Model says "seen enough" too early: keep sampling at an even spacing over what's left.
+            nxt = req.frame_time + even
+        elif nxt is not None and even and nxt - req.frame_time > 2 * even:
+            nxt = req.frame_time + even  # don't let one guess skip most of the remaining frames
         if nxt is not None and req.duration:
             nxt = min(max(nxt, req.frame_time + 1.5), req.duration - 0.5)
             if nxt <= req.frame_time:
                 nxt = None
         out.next_capture_at = nxt
-        out.final = req.frame_index >= req.max_frames or nxt is None
+        out.final = req.frame_index >= max_frames or nxt is None
         out.belief = b
         out.record = _record(b)
     else:
-        out.final = req.frame_index >= req.max_frames
+        out.final = req.frame_index >= max_frames
 
     feed.publish(
         "observe_result",
@@ -619,6 +627,7 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
         happening=b.happening,
         nextCaptureAt=out.next_capture_at,
         final=out.final,
+        maxFrames=max_frames,
         reactions=[r.model_dump(by_alias=True) for r in out.reactions],
         runningJoke=b.running_joke,
     )
@@ -633,6 +642,7 @@ class ModelSettings(BaseModel):
     text: str | None = None
     text_fallback: str | None = None
     race_text: bool | None = None
+    frames: str | None = None  # "auto" or "1".."12"
 
 
 def _provider_key(model: str | None) -> str | None:
@@ -703,6 +713,11 @@ async def set_settings(body: ModelSettings) -> dict:
         if m and k and not config.has_key(k):
             raise HTTPException(400, f"{m} needs {k} in backend/.env")
     race_text = body.race_text if body.race_text is not None else cur["race_text"]
+    if body.frames is not None:
+        f = body.frames.strip().lower()
+        if f != "auto" and not (f.isdigit() and 1 <= int(f) <= 12):
+            raise HTTPException(400, "frames must be 'auto' or a number from 1 to 12")
+        config.set_frames(f)
     config.apply_models(new["vision"], new["text"], new["vision_fallback"], new["text_fallback"], race_text)
     _cache.clear()  # analyses from the old model shouldn't be reused
     await live.reset()  # close Live sessions from the previous model

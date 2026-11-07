@@ -216,8 +216,8 @@ class ObserveRequest(Camel):
     frame: str = ""  # one base64 JPEG (empty = text only); used for one call, never stored
     frame_time: float = 0
     duration: float = 0
-    frame_index: int = Field(1, ge=1, le=6)
-    max_frames: int = Field(3, ge=1, le=6)
+    frame_index: int = Field(1, ge=1, le=12)
+    max_frames: int = Field(12, ge=1, le=12)  # client's upper bound; the server's setting decides
     title: str = Field(default="", max_length=300)
     channel: str = Field(default="", max_length=120)
     captions: list[str] = Field(default_factory=list, max_length=20)
@@ -253,4 +253,5 @@ class ObserveResponse(Camel):
     reactions: list[ReactionCandidate] = Field(default_factory=list)
     next_capture_at: float | None = None
     final: bool = False
+    max_frames: int = 3  # effective limit for this Short (from the /ui setting)
     record: MemoryItem  # what goes into the 3-Short memory if this Short ends now

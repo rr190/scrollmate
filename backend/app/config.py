@@ -26,6 +26,8 @@ OPENAI_REASONING = os.getenv("SCROLLMATE_OPENAI_REASONING", "none").strip()
 RACE_TEXT = _bool("SCROLLMATE_RACE_TEXT", True)
 # Per-frame vision in /observe: race VISION_MODEL against VISION_FALLBACK_MODEL (first valid wins).
 RACE_VISION = _bool("SCROLLMATE_RACE_VISION", True)
+# Frames analysed per Short: "auto" (by length: <=15 s -> 4, <=30 s -> 6, longer -> 8) or a fixed number 1-12.
+FRAMES = os.getenv("SCROLLMATE_FRAMES", "auto").strip().lower()
 # The swipe step answers from the title only; give up (stay silent) after this long.
 SWIPE_DEADLINE_S = float(os.getenv("SCROLLMATE_SWIPE_DEADLINE", "1.5"))
 # Gemini Live vision lane: per-frame deadline before falling back to the regular vision model.
@@ -126,7 +128,27 @@ def current_models() -> dict:
         "text": TEXT_MODEL,
         "text_fallback": TEXT_FALLBACK_MODEL,
         "race_text": RACE_TEXT,
+        "frames": FRAMES,
     }
+
+
+def frames_for(duration: float) -> int:
+    """How many frames to analyse for a Short of this length."""
+    if FRAMES != "auto":
+        try:
+            return max(1, min(12, int(FRAMES)))
+        except ValueError:
+            pass
+    if duration and duration <= 15:
+        return 4
+    if duration and duration <= 30:
+        return 6
+    return 8 if duration else 4  # unknown length: be modest
+
+
+def set_frames(value: str) -> None:
+    global FRAMES
+    FRAMES = value
 
 
 def apply_models(vision: str, text: str, vision_fallback: str | None, text_fallback: str | None, race_text: bool) -> None:

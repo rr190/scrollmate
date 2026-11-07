@@ -44,7 +44,8 @@ export interface UiState {
 interface ShortCtx {
   videoId: string;
   startedAt: number;
-  frameCount: number; // frames analysed so far (max MAX_FRAMES)
+  frameCount: number; // frames analysed so far
+  maxFrames: number; // limit for this Short (set by the backend /ui setting after frame 1)
   nextAt: number; // video second for the next frame
   capturing: boolean;
   observing: boolean; // an /observe call is in flight
@@ -62,7 +63,8 @@ const SETTINGS_KEY = 'scrollmate.settings';
 const posKey = (env: Env) => `scrollmate.position.${env}`;
 const SLEEP_AFTER_MS = 90_000;
 const CAPTION_EVERY_MS = 4_000;
-const MAX_FRAMES = 3;
+const MAX_FRAMES_REQUEST = 12; // upper bound we ask for; the backend's setting decides
+const DEFAULT_MAX_FRAMES = 4; // until the backend has told us
 const FIRST_FRAME_AT_S = 0.4; // as soon as the video is really playing
 const MIN_FRAME_GAP_S = 1.5; // leave room for the call + Chrome's capture limit
 
@@ -382,6 +384,7 @@ export class Controller {
       videoId,
       startedAt: Date.now(),
       frameCount: 0,
+      maxFrames: DEFAULT_MAX_FRAMES,
       nextAt: FIRST_FRAME_AT_S,
       capturing: false,
       observing: false,
@@ -505,7 +508,7 @@ export class Controller {
       if (!ctx.observing) this.maybeSendCaptions(ctx, video);
     }
     // Next frame when playback reaches the planned time (first frame as soon as the video is really playing).
-    if (!ctx.done && !ctx.capturing && !ctx.observing && ctx.frameCount < MAX_FRAMES && !video.paused && video.currentTime >= ctx.nextAt) {
+    if (!ctx.done && !ctx.capturing && !ctx.observing && ctx.frameCount < ctx.maxFrames && !video.paused && video.currentTime >= ctx.nextAt) {
       void this.frameStep(ctx, video);
     }
     if (ev !== 'time') this.tick();
@@ -555,8 +558,8 @@ export class Controller {
     ctx.frameCount++;
     const index = ctx.frameCount;
     if (this.state.frameSource !== source) this.set({ frameSource: source });
-    console.log(LOG, `frame ${index}/${MAX_FRAMES} via ${source} at ${t.toFixed(1)}s`);
-    this.emit({ type: 'frame', videoId: ctx.videoId, n: index, of: MAX_FRAMES, via: frame ? source : 'failed', t });
+    console.log(LOG, `frame ${index}/${ctx.maxFrames} via ${source} at ${t.toFixed(1)}s`);
+    this.emit({ type: 'frame', videoId: ctx.videoId, n: index, of: ctx.maxFrames, via: frame ? source : 'failed', t });
 
     const captions = ctx.pendingCaptions.splice(0); // the frame step carries any new captions
     ctx.observing = true;
@@ -570,7 +573,7 @@ export class Controller {
         frameTime: t,
         duration,
         frameIndex: index,
-        maxFrames: MAX_FRAMES,
+        maxFrames: MAX_FRAMES_REQUEST,
         title: ctx.title,
         channel: readPageText().channel,
         captions,
@@ -580,12 +583,15 @@ export class Controller {
       if (!this.isCurrent(ctx)) return;
       if (res?.error) this.set({ note: `Backend unreachable or failed (${res.error.slice(0, 60)}). Staying quiet.` });
       if (res?.emotion && res.level >= 1) this.showFace(ctx, res.emotion, res.level >= 3 ? 1 : 0.8, `frame ${index}`, t);
-      this.propose(res?.reactions ?? [], [t]);
+      // No "avoid" time: the line is a reaction to a moment that just happened, so showing it now is the point.
+      // (Level 2-3 lines are marked 'now' by the backend; the timing engine still applies the reading gap.)
+      this.propose(res?.reactions ?? []);
       // Plan the next frame: trust the model's guess only within sane bounds.
       const now = video.currentTime;
       let next = res?.nextCaptureAt ?? null;
       if (next !== null) next = Math.max(next, t + MIN_FRAME_GAP_S, now + 0.3);
-      if (res?.final || next === null || index >= MAX_FRAMES || (duration > 0 && next > duration - 0.5)) ctx.done = true;
+      if (typeof res?.maxFrames === 'number' && res.maxFrames > 0) ctx.maxFrames = res.maxFrames;
+      if (res?.final || next === null || index >= ctx.maxFrames || (duration > 0 && next > duration - 0.5)) ctx.done = true;
       else ctx.nextAt = next;
       this.emit({
         type: 'status',
@@ -594,7 +600,7 @@ export class Controller {
       });
     } catch (e) {
       console.warn(LOG, 'observe failed', e);
-      if (index >= MAX_FRAMES) ctx.done = true;
+      if (index >= ctx.maxFrames) ctx.done = true;
       else ctx.nextAt = t + 3; // try again a bit later
     } finally {
       ctx.observing = false;

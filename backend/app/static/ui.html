@@ -138,6 +138,15 @@
     </div>
     <datalist id="knownModels"></datalist>
     <label class="check"><input type="checkbox" id="mRace"> Race text models (ask both at once, first valid answer wins)</label>
+    <div class="row" style="max-width:520px">
+      <div><label for="mFrames">Frames per Short</label>
+        <select id="mFrames">
+          <option value="auto">Auto by length (≤15 s → 4 · ≤30 s → 6 · longer → 8)</option>
+          <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+          <option value="5">5</option><option value="6">6</option><option value="8">8</option><option value="10">10</option><option value="12">12</option>
+        </select></div>
+      <div class="note" style="align-self:end">Each frame is one vision call (~1–2 s). More frames = better coverage, more cost / rate limit use. Applies from the next Short.</div>
+    </div>
     <div class="btns">
       <button class="primary" id="mApply">Apply custom</button>
       <button id="mPing">⚡ Speed test</button>
@@ -490,6 +499,7 @@ async function loadModels(view) {
   $('mText').value = cur.text || '';
   $('mTextFb').value = cur.text_fallback || '';
   $('mRace').checked = !!cur.race_text;
+  $('mFrames').value = cur.frames || 'auto';
   $('knownModels').innerHTML = view.knownModels.map((m) => `<option value="${esc(m)}">${view.textOnly.includes(m) ? 'text only' : ''}</option>`).join('');
   $('modelsState').textContent = view.mock ? 'MOCK mode: no LLM calls are made' : (view.activePreset ? `preset: ${view.presets[view.activePreset].label}` : 'custom');
 }
@@ -508,7 +518,9 @@ $('presets').addEventListener('click', (e) => {
 $('mApply').onclick = () => applyModels({
   vision: $('mVision').value.trim(), vision_fallback: $('mVisionFb').value.trim(),
   text: $('mText').value.trim(), text_fallback: $('mTextFb').value.trim(), race_text: $('mRace').checked,
+  frames: $('mFrames').value,
 });
+$('mFrames').onchange = () => applyModels({ frames: $('mFrames').value });
 $('mPing').onclick = async () => {
   const btn = $('mPing');
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Testing…';
@@ -607,7 +619,7 @@ function onFeedEvent(ev) {
       break;
     case 'observe_request':
       if (ev.image) card.el.querySelector('.img').innerHTML = `<img class="strip" alt="what the AI saw" src="data:image/jpeg;base64,${ev.image}">`;
-      line(card, ev.ts, `observe ${ev.n}/${ev.of}`, 'ai', `frame at ${ev.t}s${ev.duration ? ' of ' + Math.round(ev.duration) + 's' : ''}${ev.captions?.length ? ' + captions' : ''}`);
+      line(card, ev.ts, `observe ${ev.n}`, 'ai', `frame at ${ev.t}s${ev.duration ? ' of ' + Math.round(ev.duration) + 's' : ''}${ev.captions?.length ? ' + captions' : ''}`);
       break;
     case 'observe_result': {
       const failed = /FAILED/.test(ev.path || '');
@@ -617,6 +629,7 @@ function onFeedEvent(ev) {
         ` <span class="k">· level ${ev.level} · ${esc(ev.change)} change · conf ${ev.confidence} · ${ev.ms} ms · ${esc(ev.path)}</span>` +
         (arc ? `<br><span class="k">arc:</span> ${arc}` : '') +
         (ev.reactions?.length ? `<br><span class="k">line:</span> ${ev.reactions.map((r) => '“' + esc(r.text) + '” (' + r.importance.toFixed(2) + (r.isCallback ? ', callback' : '') + ')').join(' ')}` : '') +
+        (ev.maxFrames ? ` <span class="k">· frame ${ev.n}/${ev.maxFrames}</span>` : '') +
         (ev.final ? ' <span class="chip">final</span>' : (ev.nextCaptureAt != null ? ` <span class="k">· next frame ≈ ${ev.nextCaptureAt}s</span>` : '')) +
         (ev.runningJoke ? `<br><span class="k">running joke:</span> ${esc(ev.runningJoke)}` : ''));
       break;
