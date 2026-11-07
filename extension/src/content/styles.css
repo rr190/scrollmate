@@ -71,30 +71,79 @@
   stroke-width: 2.2;
 }
 
-.sm-eyes {
+/* ---- seamless expression changes: every face part is a layer that crossfades ---- */
+.sm-char {
+  transform-origin: 50% 90%;
+}
+.sm-l {
+  opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
+  transform: scale(0.82);
+  transition:
+    opacity 0.2s ease,
+    transform 0.28s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.sm-l.sm-on {
+  opacity: 1;
+  transform: none;
+}
+.sm-blinker.sm-on {
   animation: sm-blink 5.5s infinite;
 }
-.sm-mood-sleeping .sm-eyes,
-.sm-mood-amused .sm-eyes {
-  animation: none;
+.sm-cheeks ellipse {
+  opacity: 0.6;
+  transition: opacity 0.3s ease;
 }
-.sm-look-up {
-  transform: translate(1.5px, -2px);
+.sm-cheeks.sm-blush ellipse {
+  opacity: 1;
 }
 
 .sm-sparkles path {
   stroke: #ffc23d;
   stroke-width: 5;
   stroke-linecap: round;
-  opacity: 0;
-  transition: opacity 0.2s;
 }
-.sm-mood-amused .sm-sparkles path,
-.sm-mood-speaking .sm-sparkles path {
-  opacity: 1;
+.sm-sparkles.sm-on path {
   animation: sm-spark 0.9s ease-in-out infinite alternate;
+}
+.sm-hearts path {
+  fill: #ff7aa2;
+}
+.sm-hearts.sm-on path {
+  animation: sm-rise 1.6s ease-in-out infinite alternate;
+}
+.sm-hearts.sm-on path:nth-child(2) {
+  animation-delay: 0.4s;
+}
+.sm-heart-eyes.sm-on,
+.sm-stars.sm-on {
+  animation: sm-throb 0.7s ease-in-out infinite alternate;
+}
+.sm-laugh.sm-on {
+  animation: sm-shake 0.18s ease-in-out infinite alternate;
+}
+.sm-exclaim path {
+  stroke: #ff4f7b;
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+.sm-exclaim circle {
+  fill: #ff4f7b;
+}
+.sm-sweat path {
+  fill: #9fd3ff;
+  stroke: #5aa9e6;
+  stroke-width: 1;
+}
+.sm-sweat.sm-on path {
+  animation: sm-drip 1.4s ease-in infinite;
+}
+.sm-tear path {
+  fill: #8cc8ff;
+}
+.sm-tear.sm-on path {
+  animation: sm-drip 1.8s ease-in infinite;
 }
 
 .sm-talk {
@@ -126,9 +175,28 @@
   animation-delay: 0.7s;
 }
 
-.sm-mood-amused {
+.sm-mood-amused,
+.sm-mood-laughing {
   transform-origin: 50% 85%;
   animation: sm-giggle 0.5s ease-in-out 2;
+}
+
+@keyframes sm-rise {
+  from { transform: translateY(0); }
+  to { transform: translateY(-5px); }
+}
+@keyframes sm-throb {
+  from { transform: scale(1); }
+  to { transform: scale(1.12); }
+}
+@keyframes sm-shake {
+  from { transform: translateY(0); }
+  to { transform: translateY(1.2px); }
+}
+@keyframes sm-drip {
+  0% { transform: translateY(-2px); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: translateY(6px); opacity: 0; }
 }
 
 .sm-dot {
@@ -472,14 +540,25 @@
 
 @media (prefers-reduced-motion: reduce) {
   .sm-float,
-  .sm-eyes,
+  .sm-blinker,
   .sm-talk,
   .sm-thought circle,
   .sm-zzz text,
   .sm-mood-amused,
+  .sm-mood-laughing,
   .sm-sparkles path,
+  .sm-hearts path,
+  .sm-heart-eyes,
+  .sm-stars,
+  .sm-laugh,
+  .sm-sweat path,
+  .sm-tear path,
   .sm-bubble,
   .sm-popover {
     animation: none !important;
+  }
+  .sm-l {
+    transition: opacity 0.15s ease !important; /* still crossfade, but no movement */
+    transform: none !important;
   }
 }

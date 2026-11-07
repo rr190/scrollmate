@@ -105,6 +105,7 @@
   .tag.SPEAK_NOW, .tag.delivered { color: #fff; background: var(--good); }
   .tag.WAIT { color: var(--warn); } .tag.SAVE_FOR_LATER { color: #2b7bd6; } .tag.STAY_SILENT { color: var(--muted); }
   .tag.err { color: #fff; background: var(--bad); }
+  .tag.emotion { color: #fff; background: #ff7aa2; }
   .bubble { display: inline-block; background: var(--accent-soft); border-radius: 14px; padding: 4px 10px; font-weight: 600; }
   @keyframes in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 </style>
@@ -198,6 +199,8 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let idSeq = 1;
+const EMO = { surprised: '😮', laughing: '😂', impressed: '🤩', worried: '😟', cringe: '😬', love: '🥰', sad: '😢' };
+const cueText = (cues) => (cues || []).map((c) => `${EMO[c.emotion] || ''} ${esc(c.emotion)} @ ${c.t}s`).join(' · ');
 let frames = [];           // [{name, b64, url}]
 let lastAnalysis = null;
 let memory = [];           // MemoryItem[] (camelCase, like the extension)
@@ -331,7 +334,8 @@ $('analyseBtn').onclick = async () => {
       <dl>
         <dt>Topic</dt><dd><b>${esc(a.topic)}</b></dd>
         <dt>Summary</dt><dd>${esc(a.summary)}</dd>
-        <dt>Events</dt><dd>${a.events.length ? `<ul class="events">${a.events.map((e) => `<li>${e.timestamp ?? '?'}s: ${esc(e.description)} <span class="k">(${e.confidence})</span></li>`).join('')}</ul>` : '<span class="k">none</span>'}</dd>
+        <dt>Events</dt><dd>${a.events.length ? `<ul class="events">${a.events.map((e) => `<li>${e.timestamp ?? '?'}s: ${esc(e.description)} <span class="k">(${e.confidence})</span>${e.emotion ? ` ${EMO[e.emotion] || ''} <span class="chip">${esc(e.emotion)}</span>` : ''}</li>`).join('')}</ul>` : '<span class="k">none</span>'}</dd>
+        <dt>Face cues</dt><dd>${a.cues?.length ? cueText(a.cues) : '<span class="k">none (no clear moments, or text only)</span>'}</dd>
         <dt>Outcome</dt><dd>${esc(a.outcome ?? '-')}</dd>
         <dt>Mood</dt><dd>${esc(a.mood)}</dd>
         <dt>Themes</dt><dd><div class="chips">${a.themes.map((t) => `<span class="chip">${esc(t)}</span>`).join('') || '<span class="k">none</span>'}</div></dd>
@@ -493,7 +497,8 @@ function onFeedEvent(ev) {
       const failed = /FAILED/.test(ev.path);
       line(card, ev.ts, failed ? 'AI failed' : 'AI saw', failed ? 'err' : 'ai',
         `<b>${esc(a.topic)}</b>: ${esc(a.summary)} <span class="k">· ${esc(a.understandingLevel)} · conf ${a.confidence} · ${ev.ms} ms · ${esc(ev.path)}</span>` +
-        (a.confidence < 0.35 ? ' <span class="k">→ too unsure, staying quiet</span>' : ''));
+        (a.confidence < 0.35 ? ' <span class="k">→ too unsure, staying quiet</span>' : '') +
+        (a.cues?.length ? `<br><span class="k">face cues:</span> ${cueText(a.cues)}` : ''));
       break;
     }
     case 'react_request':
@@ -515,6 +520,21 @@ function onFeedEvent(ev) {
       line(card, ev.ts, ev.decision.replace(/_/g, ' '), ev.decision, `${esc(ev.reason)} <span class="k">· “${esc(ev.text.slice(0, 70))}${ev.text.length > 70 ? '…' : ''}” at ${ev.currentTime}s</span>${where}`);
       break;
     }
+    case 'caption_request':
+      line(card, ev.ts, 'captions', 'ai', `“${esc((ev.lines || []).join(' | '))}”${ev.at != null ? ` <span class="k">at ${ev.at}s</span>` : ''}`);
+      break;
+    case 'caption_result':
+      line(card, ev.ts, 'said →', 'ai',
+        (ev.emotion ? `${EMO[ev.emotion] || ''} <b>${esc(ev.emotion)}</b> ` : '') +
+        (ev.reactions?.length ? ev.reactions.map((r) => `“${esc(r.text)}” <span class="k">(${r.importance.toFixed(2)})</span>`).join(' ') : (ev.emotion ? '' : 'nothing worth saying')) +
+        ` <span class="k">· ${ev.ms} ms · ${esc(ev.path)}</span>`);
+      break;
+    case 'status':
+      line(card, ev.ts, 'note', '', esc(ev.note || ''));
+      break;
+    case 'emotion':
+      line(card, ev.ts, 'FACE', 'emotion', `<span style="font-size:18px">${EMO[ev.emotion] || ''}</span> <b>${esc(ev.emotion)}</b> <span class="k">at ${ev.at}s (moment at ${ev.t}s)${ev.via ? ' · from ' + esc(ev.via) : ''}</span>`);
+      break;
     case 'delivered':
       line(card, ev.ts, 'SHOWN', 'delivered', `<span class="bubble">${esc(ev.text)}</span> <span class="k">${esc(ev.mode)} · ${esc(ev.reason)}</span>`);
       break;

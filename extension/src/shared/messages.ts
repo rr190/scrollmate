@@ -1,3 +1,4 @@
+import type { Emotion } from './emotions';
 import type { Analysis, Frequency, MemoryRecord, Personality, ReactionProposal, Rect } from './types';
 
 /** Messages from content script / stage page to the background worker. */
@@ -23,10 +24,20 @@ export type BgRequest =
   | { type: 'CLEAR_MEMORY' }
   | { type: 'CANCEL_ALL' }
   | { type: 'OPEN_STAGE' }
+  | {
+      type: 'CAPTION_REACT';
+      videoId: string;
+      lines: string[];
+      title: string;
+      channel: string;
+      currentTime: number;
+      personality: Personality;
+      frequency: Frequency;
+    }
   | { type: 'TELEMETRY'; event: TelemetryEvent };
 
 /** Small scalar-only events for the backend's live feed (/ui). Never frames or transcripts. */
-export type TelemetryEvent = { type: 'short_started' | 'short_left' | 'frame' | 'decision' | 'delivered' | 'status' } & Record<
+export type TelemetryEvent = { type: 'short_started' | 'short_left' | 'frame' | 'decision' | 'delivered' | 'emotion' | 'status' } & Record<
   string,
   string | number | boolean | null
 >;
@@ -34,6 +45,11 @@ export type TelemetryEvent = { type: 'short_started' | 'short_left' | 'frame' | 
 export type CaptureResponse = { ok: true; data: string } | { ok: false; error: string };
 export interface AnalyseReactResponse {
   analysis: Analysis | null;
+  reactions: ReactionProposal[];
+  error?: string;
+}
+export interface CaptionReactResponse {
+  emotion: Emotion | null;
   reactions: ReactionProposal[];
   error?: string;
 }

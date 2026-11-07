@@ -10,10 +10,12 @@ Frames are used for the single LLM call and never stored or logged.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
 from collections import OrderedDict, defaultdict, deque
+from contextlib import asynccontextmanager
 
 from pathlib import Path
 
@@ -23,23 +25,40 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from . import config, mock
 from .feed import feed
-from .llm import structured
+from .llm import race, structured, warm_up
 from .models import (
     AnalyseRequest,
     Analysis,
+    CaptionRequest,
+    CaptionResponse,
+    EmotionCue,
     Event,
     LLMAnalysis,
+    LLMCaptionReaction,
     LLMReactions,
     ReactionCandidate,
     ReactRequest,
     ReactResponse,
 )
-from .prompts import analyse_messages, react_messages
+from .prompts import analyse_messages, caption_messages, react_messages
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("scrollmate")
 
-app = FastAPI(title="ScrollMate backend", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Warm models in the background so the server is ready instantly but the first Short is fast.
+    task = None
+    if not config.MOCK and config.WARMUP:
+        task = asyncio.create_task(
+            warm_up([config.VISION_MODEL, config.TEXT_MODEL, config.VISION_FALLBACK_MODEL, config.TEXT_FALLBACK_MODEL])
+        )
+    yield
+    if task and not task.done():
+        task.cancel()
+
+
+app = FastAPI(title="ScrollMate backend", version="0.1.0", lifespan=lifespan)
 
 # CORS restricted to the extension's origin (set SCROLLMATE_EXTENSION_ORIGIN once you know the ID).
 if config.EXTENSION_ORIGIN:
@@ -107,8 +126,57 @@ async def health():
         "visionModel": config.VISION_MODEL,
         "textModel": config.TEXT_MODEL,
         "textFallbackModel": config.TEXT_FALLBACK_MODEL,
+        "visionFallbackModel": config.VISION_FALLBACK_MODEL,
+        "openaiReasoning": config.OPENAI_REASONING,
         "feedImages": config.DEV_FEED_IMAGES,
     }
+
+
+async def _text_call(response_model, messages, temperature: float, max_tokens: int):
+    """Text-only LLM call. With racing on, primary and fallback run at once and the first valid answer wins."""
+    if config.RACE_TEXT:
+        return await race(response_model, messages, [config.TEXT_MODEL, config.TEXT_FALLBACK_MODEL], temperature, max_tokens)
+    res = await structured(response_model, messages, config.TEXT_MODEL, temperature, max_tokens)
+    if res is None and config.TEXT_FALLBACK_MODEL:
+        return await structured(response_model, messages, config.TEXT_FALLBACK_MODEL, temperature, max_tokens), config.TEXT_FALLBACK_MODEL
+    return res, config.TEXT_MODEL if res is not None else None
+
+
+def _race_path(winner: str | None) -> str:
+    if winner is None:
+        return f"{config.TEXT_MODEL} + {config.TEXT_FALLBACK_MODEL}"
+    return f"race won by {winner}" if config.RACE_TEXT else winner
+
+
+# Output caps: shorter answers come back faster (benchmarked with these values).
+ANALYSE_MAX_TOKENS = 450
+REACT_MAX_TOKENS = 250
+CAPTION_MAX_TOKENS = 150
+
+
+def _snap(t: float | None, frame_times: list[float]) -> float | None:
+    """Pin a model timestamp to the nearest real frame capture time (models drift on strips)."""
+    if t is None or not frame_times:
+        return t
+    return min(frame_times, key=lambda f: abs(f - t))
+
+
+CUE_MIN_GAP_S = 1.2
+
+
+def build_cues(events: list[Event], level: str, confidence: float) -> list[EmotionCue]:
+    """Timed facial reactions. Only from moments actually seen in frames, never from text alone."""
+    if level not in ("visual_and_text", "visual_only") or confidence < 0.35:
+        return []
+    cues: list[EmotionCue] = []
+    for e in sorted((e for e in events if e.emotion and e.timestamp is not None and e.confidence >= 0.5), key=lambda e: e.timestamp):
+        cue = EmotionCue(t=round(e.timestamp, 2), emotion=e.emotion, intensity=round(min(1.0, e.confidence * confidence + 0.2), 2))
+        if cues and cue.t - cues[-1].t < CUE_MIN_GAP_S:
+            if cue.intensity > cues[-1].intensity:
+                cues[-1] = cue  # two reactions too close together: keep the stronger one
+            continue
+        cues.append(cue)
+    return cues[:4]
 
 
 def _ms(t0: float) -> int:
@@ -159,14 +227,23 @@ async def _analyse(req: AnalyseRequest, request: Request) -> tuple[Analysis, str
     else:
         model = config.VISION_MODEL if req.frames else config.TEXT_MODEL
         path = model
-        raw = await structured(LLMAnalysis, analyse_messages(req), model=model, temperature=0.2)
+        raw = await structured(LLMAnalysis, analyse_messages(req), model=model, temperature=0.2, max_tokens=ANALYSE_MAX_TOKENS)
+        if raw is None and req.frames and config.VISION_FALLBACK_MODEL and config.VISION_FALLBACK_MODEL != model:
+            # Primary vision model failed or timed out: try the other provider, still with the image.
+            log.info("analyse %s: %s failed, falling back to %s", req.video_id, model, config.VISION_FALLBACK_MODEL)
+            raw = await structured(
+                LLMAnalysis, analyse_messages(req), model=config.VISION_FALLBACK_MODEL, temperature=0.2, max_tokens=ANALYSE_MAX_TOKENS
+            )
+            path = f"{model} failed -> {config.VISION_FALLBACK_MODEL}"
         if raw is None and req.frames and has_text:
-            # Vision model failed or is rate limited: retry text-only on the text model.
+            # No vision model available: last resort, text-only on the text model.
             log.info("analyse %s: vision failed, falling back to %s (text only)", req.video_id, config.TEXT_MODEL)
             text_req = req.model_copy(update={"frames": [], "frame_times": [], "composite": False})
-            raw = await structured(LLMAnalysis, analyse_messages(text_req), model=config.TEXT_MODEL, temperature=0.2)
+            raw = await structured(
+                LLMAnalysis, analyse_messages(text_req), model=config.TEXT_MODEL, temperature=0.2, max_tokens=ANALYSE_MAX_TOKENS
+            )
             level = "text_only"
-            path = f"{model} failed -> {config.TEXT_MODEL} (text only)"
+            path = f"{path} -> {config.TEXT_MODEL} (text only)"
 
     if await request.is_disconnected():
         log.info("client left %s before analysis finished; result not cached", req.video_id)
@@ -179,16 +256,26 @@ async def _analyse(req: AnalyseRequest, request: Request) -> tuple[Analysis, str
         )
 
     conf = raw.confidence if level != "text_only" else min(raw.confidence, 0.6)
+    events = [
+        Event(
+            timestamp=_snap(e.timestamp, req.frame_times) if level != "text_only" else None,
+            description=e.description[:200],
+            confidence=e.confidence,
+            emotion=e.emotion,
+        )
+        for e in raw.events[:4]
+    ]
     a = Analysis(
         video_id=req.video_id,
         topic=raw.topic.strip().lower()[:40] or "unknown",
         summary=raw.summary.strip()[:240],
-        events=[Event(timestamp=e.timestamp, description=e.description[:200], confidence=e.confidence) for e in raw.events[:4]],
+        events=events,
         outcome=raw.outcome,
         mood=raw.mood,
         themes=[t.strip().lower()[:24] for t in raw.themes if t.strip()][:4],
         understanding_level=level,
         confidence=conf,
+        cues=build_cues(events, level, conf),
     )
     if not await request.is_disconnected():
         cache_put(a)
@@ -227,12 +314,8 @@ async def _react(req: ReactRequest, request: Request) -> tuple[ReactResponse, st
         raw: LLMReactions | None = mock.react(req)
         path = "mock"
     else:
-        path = config.TEXT_MODEL
-        raw = await structured(LLMReactions, react_messages(req), model=config.TEXT_MODEL, temperature=0.8)
-        if raw is None and config.TEXT_FALLBACK_MODEL:
-            log.info("react %s: falling back to %s", req.current_video_id, config.TEXT_FALLBACK_MODEL)
-            raw = await structured(LLMReactions, react_messages(req), model=config.TEXT_FALLBACK_MODEL, temperature=0.8)
-            path = f"{config.TEXT_MODEL} failed -> {config.TEXT_FALLBACK_MODEL}"
+        raw, winner = await _text_call(LLMReactions, react_messages(req), temperature=0.8, max_tokens=REACT_MAX_TOKENS)
+        path = _race_path(winner)
 
     if raw is None:
         return ReactResponse(reactions=[]), f"{path}: FAILED (see server log)"
@@ -262,8 +345,49 @@ async def _react(req: ReactRequest, request: Request) -> tuple[ReactResponse, st
     return ReactResponse(reactions=out), path
 
 
+@app.post("/scrollmate/caption", response_model=CaptionResponse, response_model_by_alias=True)
+async def caption(req: CaptionRequest, request: Request) -> CaptionResponse:
+    """Fast text-only step: react to captions as they appear (runs alongside frame analysis)."""
+    rate_limit(request)
+    t0 = time.perf_counter()
+    feed.publish("caption_request", videoId=req.video_id, lines=req.lines[:6], at=req.current_time)
+    out = CaptionResponse()
+    path = "mock"
+    if not config.MOCK:
+        raw, winner = await _text_call(LLMCaptionReaction, caption_messages(req), temperature=0.7, max_tokens=CAPTION_MAX_TOKENS)
+        path = _race_path(winner)
+        if raw is not None and not await request.is_disconnected():
+            out.emotion = raw.emotion
+            r = raw.reaction
+            if r is not None:
+                text = " ".join(r.text.split())
+                if safe(text):
+                    out.reactions.append(
+                        ReactionCandidate(
+                            text=text,
+                            importance=r.importance,
+                            target_video_id=req.video_id,
+                            preferred_timing=r.preferred_timing,
+                            expires_after_seconds=15,  # about words just said: goes stale fast
+                            requires_quiet_moment=True,
+                            is_callback=False,
+                        )
+                    )
+                else:
+                    feed.publish("reaction_blocked", videoId=req.video_id, text=text)
+    feed.publish(
+        "caption_result",
+        videoId=req.video_id,
+        path=path,
+        ms=_ms(t0),
+        emotion=out.emotion,
+        reactions=[r.model_dump(by_alias=True) for r in out.reactions],
+    )
+    return out
+
+
 # ---------- live feed (dev): extension events in, SSE out ----------
-_CLIENT_TYPES = {"short_started", "short_left", "frame", "decision", "delivered", "status"}
+_CLIENT_TYPES = {"short_started", "short_left", "frame", "decision", "delivered", "emotion", "status"}
 
 
 @app.post("/scrollmate/events")

@@ -4,7 +4,15 @@
  *   reaction proposals          ->  TimingEngine (decides)  ->  bubble / voice
  * The UI subscribes to `state` and stays dumb.
  */
-import { sendBg, type AnalyseReactResponse, type CaptureResponse, type ReactResponse, type TelemetryEvent } from '../shared/messages';
+import {
+  sendBg,
+  type AnalyseReactResponse,
+  type CaptionReactResponse,
+  type CaptureResponse,
+  type ReactResponse,
+  type TelemetryEvent,
+} from '../shared/messages';
+import { CueTrack, type Emotion, type EmotionCue } from '../shared/emotions';
 import { TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
 import { DEFAULT_SETTINGS, type MemoryRecord, type ReactionProposal, type Rect, type Settings } from '../shared/types';
 import { DEMO_SHORTS, DemoDriver, type DemoShort, type DemoView } from './demo';
@@ -12,7 +20,7 @@ import { readPageText, ShortsWatcher, type LeftInfo, type ShortInfo } from './sh
 import { Speaker } from './speech';
 
 const LOG = '[ScrollMate]';
-export type Mood = 'idle' | 'watching' | 'thinking' | 'amused' | 'speaking' | 'sleeping';
+export type Mood = 'idle' | 'watching' | 'thinking' | 'amused' | 'speaking' | 'sleeping' | Emotion;
 export type Env = 'youtube' | 'stage';
 
 export interface Position {
@@ -41,11 +49,15 @@ interface ShortCtx {
   analysed: boolean;
   captions: Set<string>;
   lastCaptionRead: number;
+  pendingCaptions: string[]; // new lines not yet sent to the caption step
+  lastCaptionSent: number;
+  captionInflight: boolean;
 }
 
 const SETTINGS_KEY = 'scrollmate.settings';
 const posKey = (env: Env) => `scrollmate.position.${env}`;
 const SLEEP_AFTER_MS = 90_000;
+const CAPTION_EVERY_MS = 4_000;
 
 let idSeq = 0;
 const newId = () => `r${Date.now().toString(36)}${(idSeq++).toString(36)}`;
@@ -76,6 +88,7 @@ export class Controller {
   private demoTimers: number[] = [];
   private epoch = 0; // bumps on disable/clear so late async results are ignored
   private logSent = 0; // decision-log entries already sent to the live feed
+  private cues = new CueTrack(); // timed facial reactions for the Short on screen
 
   constructor(public env: Env, private host: HTMLElement) {}
 
@@ -113,7 +126,7 @@ export class Controller {
       });
     }
     if (this.state.settings.demo && this.state.settings.enabled) this.startDemo();
-    this.tickTimer = window.setInterval(() => this.tick(), 300);
+    this.tickTimer = window.setInterval(() => this.tick(), 150); // fast enough to land faces on the moment
     this.tick();
   }
 
@@ -159,6 +172,7 @@ export class Controller {
   /** Stop all processing immediately. */
   private disable() {
     this.epoch++;
+    this.cues.clear();
     this.engine.cancelAll(this.snapshot(), Date.now());
     this.speaker.cancel();
     this.hideBubble();
@@ -171,6 +185,7 @@ export class Controller {
 
   async clearMemory() {
     this.epoch++;
+    this.cues.clear();
     this.engine.clear();
     this.speaker.cancel();
     this.hideBubble();
@@ -200,6 +215,11 @@ export class Controller {
 
   openStage() {
     sendBg({ type: 'OPEN_STAGE' }).catch(() => undefined);
+  }
+
+  private loadCues(videoId: string, cues: EmotionCue[]) {
+    this.cues.load(videoId, cues);
+    console.log(LOG, 'emotion cues', videoId, cues.map((c) => `${c.emotion}@${c.t}s`).join(', '));
   }
 
   // ---------- live feed telemetry (backend /ui) ----------
@@ -278,6 +298,11 @@ export class Controller {
       const d = this.engine.tick(snap, now);
       if (d) this.deliver(d);
       this.flushDecisions();
+      const cue = this.cues.update(snap.videoId, snap.currentTime, snap.playing, now);
+      if (cue) {
+        console.log(LOG, 'emotion', cue.emotion, `at ${snap.currentTime.toFixed(1)}s (cue ${cue.t}s)`);
+        this.emit({ type: 'emotion', videoId: snap.videoId, emotion: cue.emotion, t: cue.t, at: Math.round(snap.currentTime * 10) / 10 });
+      }
     }
     if (snap.playing) this.lastActivity = now;
     this.set({ mood: this.computeMood(snap, now), onShorts: this.env === 'stage' || !!snap.videoId });
@@ -287,6 +312,8 @@ export class Controller {
     if (!this.state.settings.enabled) return 'sleeping';
     if (this.speaking) return 'speaking';
     if (this.state.bubble) return 'amused';
+    const emo = this.cues.current(now); // a timed reaction to the moment on screen
+    if (emo) return emo;
     if (this.busy > 0 || this.engine.hasPending()) return 'thinking';
     if (now - this.lastActivity > SLEEP_AFTER_MS) return 'sleeping';
     if (s.playing) return 'watching';
@@ -340,7 +367,7 @@ export class Controller {
 
   // ---------- YouTube pipeline ----------
   private newCtx(videoId: string): ShortCtx {
-    return { videoId, startedAt: Date.now(), frames: [], frameTimes: [], attempts: 0, capturing: false, analysed: false, captions: new Set(), lastCaptionRead: 0 };
+    return { videoId, startedAt: Date.now(), frames: [], frameTimes: [], attempts: 0, capturing: false, analysed: false, captions: new Set(), lastCaptionRead: 0, pendingCaptions: [], lastCaptionSent: 0, captionInflight: false };
   }
 
   private onShortChange(info: ShortInfo, prev: LeftInfo | null) {
@@ -394,7 +421,12 @@ export class Controller {
     const now = Date.now();
     if (now - ctx.lastCaptionRead > 1500) {
       ctx.lastCaptionRead = now;
-      readPageText().captions.forEach((c) => ctx.captions.size < 30 && ctx.captions.add(c));
+      for (const c of readPageText().captions) {
+        if (ctx.captions.has(c) || ctx.captions.size >= 30) continue;
+        ctx.captions.add(c);
+        ctx.pendingCaptions.push(c);
+      }
+      this.maybeSendCaptions(ctx, video);
     }
     const d = isFinite(video.duration) ? video.duration : 0;
     if (d > 0 && !ctx.analysed && !ctx.capturing && ctx.attempts < 3) {
@@ -403,6 +435,45 @@ export class Controller {
     }
     if (ev === 'loop' && !ctx.analysed && ctx.attempts > 0 && !ctx.capturing) this.analyse(ctx, this.watcher?.secondsWatched ?? 0);
     if (ev !== 'time') this.tick();
+  }
+
+  /**
+   * Caption step: react to what was just said. Runs alongside frame analysis (independent request,
+   * fast text model). Batched to at most one request every CAPTION_EVERY_MS per Short.
+   */
+  private async maybeSendCaptions(ctx: ShortCtx, video: HTMLVideoElement) {
+    const now = Date.now();
+    if (!ctx.pendingCaptions.length || ctx.captionInflight || now - ctx.lastCaptionSent < CAPTION_EVERY_MS) return;
+    const lines = ctx.pendingCaptions.splice(0);
+    ctx.captionInflight = true;
+    ctx.lastCaptionSent = now;
+    const epoch = this.epoch;
+    const { title, channel } = readPageText();
+    const at = Math.round(video.currentTime * 10) / 10;
+    this.emit({ type: 'status', videoId: ctx.videoId, note: `captions sent: ${lines.join(' | ').slice(0, 200)}`, t: at });
+    try {
+      const res = await sendBg<CaptionReactResponse>({
+        type: 'CAPTION_REACT',
+        videoId: ctx.videoId,
+        lines,
+        title,
+        channel,
+        currentTime: at,
+        personality: this.state.settings.personality,
+        frequency: this.state.settings.frequency,
+      });
+      if (epoch !== this.epoch || this.ctx !== ctx || this.watcher?.currentId !== ctx.videoId) return; // scrolled away
+      if (res?.emotion) {
+        const cue = this.cues.fireNow(ctx.videoId, res.emotion, 0.8, video.currentTime, Date.now());
+        console.log(LOG, 'emotion (captions)', cue.emotion);
+        this.emit({ type: 'emotion', videoId: ctx.videoId, emotion: cue.emotion, t: at, at: Math.round(video.currentTime * 10) / 10, via: 'captions' });
+      }
+      this.propose(res?.reactions ?? []);
+    } catch {
+      /* backend down: captions are optional */
+    } finally {
+      ctx.captionInflight = false;
+    }
   }
 
   private async captureFrame(ctx: ShortCtx, video: HTMLVideoElement) {
@@ -483,6 +554,7 @@ export class Controller {
       if (epoch !== this.epoch) return;
       if (res?.error) this.set({ note: `Backend unreachable or failed (${res.error.slice(0, 60)}). Staying quiet.` });
       if (res?.analysis) console.log(LOG, 'analysis', res.analysis);
+      if (res?.analysis?.cues?.length && this.watcher?.currentId === ctx.videoId) this.loadCues(ctx.videoId, res.analysis.cues);
       const avoid = (res?.analysis?.events ?? []).map((e) => e.timestamp).filter((t): t is number => typeof t === 'number');
       this.propose(res?.reactions ?? [], avoid);
     } catch (e) {
@@ -497,6 +569,7 @@ export class Controller {
   private startDemo() {
     if (this.demo) return;
     this.epoch++;
+    this.cues.clear();
     this.engine.clear();
     this.speaker.cancel();
     this.hideBubble();
@@ -514,6 +587,7 @@ export class Controller {
     this.demoTimers = [];
     this.demo = null;
     this.epoch++;
+    this.cues.clear();
     this.busy = 0;
     this.engine.cancelAll(this.snapshot(), Date.now(), 'demo stopped');
     this.set({ demo: null });
@@ -536,6 +610,7 @@ export class Controller {
 
   private onDemoShort(s: DemoShort, index: number) {
     this.navTimes.push(Date.now());
+    this.loadCues(s.videoId, s.cues); // demo moments are known, so faces sync on the first play
     this.emit({ type: 'short_started', videoId: s.videoId, title: s.title, channel: s.channel });
     this.lastActivity = Date.now();
     if (index === 0) {

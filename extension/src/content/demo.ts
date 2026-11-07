@@ -3,6 +3,7 @@
  * Works fully offline with canned reactions; optionally asks the live backend
  * using the same predefined observations.
  */
+import type { EmotionCue } from '../shared/emotions';
 import type { MemoryRecord, Personality, ReactionProposal } from '../shared/types';
 
 export interface DemoShort {
@@ -12,6 +13,8 @@ export interface DemoShort {
   duration: number; // seconds
   art: 'success' | 'fail' | 'pro';
   record: MemoryRecord;
+  /** Hand-timed to the stage art (see stage/main.tsx CakeArt). */
+  cues: EmotionCue[];
   canned: Record<Personality, Omit<ReactionProposal, 'targetVideoId'>[]>;
 }
 
@@ -24,6 +27,7 @@ export const DEMO_SHORTS: DemoShort[] = [
     channel: '@SweetBake',
     duration: 9,
     art: 'success',
+    cues: [{ t: 5.6, emotion: 'love', intensity: 0.8 }], // strawberries pop on
     record: {
       videoId: 'demo-cake-success',
       topic: 'baking',
@@ -50,6 +54,10 @@ export const DEMO_SHORTS: DemoShort[] = [
     channel: '@OvenOops',
     duration: 9,
     art: 'fail',
+    cues: [
+      { t: 4.6, emotion: 'worried', intensity: 0.8 }, // smoke appears
+      { t: 6.6, emotion: 'cringe', intensity: 1 }, // cake turns black
+    ],
     record: {
       videoId: 'demo-cake-fail',
       topic: 'baking',
@@ -76,6 +84,10 @@ export const DEMO_SHORTS: DemoShort[] = [
     channel: '@PastryAtelier',
     duration: 9,
     art: 'pro',
+    cues: [
+      { t: 3.0, emotion: 'surprised', intensity: 0.7 }, // glaze starts pouring
+      { t: 6.6, emotion: 'impressed', intensity: 1 }, // mirror finish revealed
+    ],
     record: {
       videoId: 'demo-cake-pro',
       topic: 'baking',

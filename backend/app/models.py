@@ -19,6 +19,8 @@ UnderstandingLevel = Literal["visual_and_text", "visual_only", "text_only", "non
 Personality = Literal["witty", "hype", "chill"]
 Frequency = Literal["rare", "balanced", "chatty"]
 Timing = Literal["now", "after_video", "next_gap"]
+# How a friend watching beside you would *feel* at a moment (drives the character's face).
+Emotion = Literal["surprised", "laughing", "impressed", "worried", "cringe", "love", "sad"]
 
 
 class Camel(BaseModel):
@@ -32,6 +34,15 @@ class Event(Camel):
     timestamp: float | None = None
     description: str = Field(max_length=200)
     confidence: float = Field(ge=0, le=1)  # model estimate, not calibrated
+    emotion: Emotion | None = None
+
+
+class EmotionCue(Camel):
+    """A facial reaction for the character, timed to a moment in the video (seconds)."""
+
+    t: float
+    emotion: Emotion
+    intensity: float = Field(ge=0, le=1)
 
 
 class Analysis(Camel):
@@ -44,6 +55,7 @@ class Analysis(Camel):
     themes: list[str] = Field(default_factory=list, max_length=5)
     understanding_level: UnderstandingLevel
     confidence: float = Field(ge=0, le=1)  # model estimate, not calibrated
+    cues: list[EmotionCue] = Field(default_factory=list, max_length=4)
 
 
 class AnalyseRequest(Camel):
@@ -60,6 +72,9 @@ class LLMEvent(BaseModel):
     timestamp: float | None = Field(None, description="Approximate second in the video, from the frame times. null if unknown.")
     description: str = Field(description="Something actually visible or said. Never invented.")
     confidence: float = Field(ge=0, le=1)
+    emotion: Emotion | None = Field(
+        None, description="How a friend watching would react at this exact moment, or null if it is unremarkable."
+    )
 
 
 class LLMAnalysis(BaseModel):
@@ -118,3 +133,27 @@ class LLMReaction(BaseModel):
 
 class LLMReactions(BaseModel):
     reactions: list[LLMReaction] = Field(default_factory=list, max_length=2, description="0-2 reactions. Empty is fine.")
+
+
+# ---------- captions (fast, text-only step) ----------
+
+
+class CaptionRequest(Camel):
+    video_id: str = Field(max_length=64)
+    lines: list[str] = Field(min_length=1, max_length=12)  # NEW caption lines since the last step
+    title: str = Field(default="", max_length=300)
+    channel: str = Field(default="", max_length=120)
+    current_time: float | None = None  # video seconds when the lines were read
+    memory: list[MemoryItem] = Field(default_factory=list, max_length=3)
+    personality: Personality = "witty"
+    frequency: Frequency = "balanced"
+
+
+class CaptionResponse(Camel):
+    emotion: Emotion | None = None  # face to show right now (silent, never interrupts)
+    reactions: list[ReactionCandidate] = Field(default_factory=list)
+
+
+class LLMCaptionReaction(BaseModel):
+    emotion: Emotion | None = Field(None, description="How a friend would react to what was just SAID, or null if it is ordinary.")
+    reaction: LLMReaction | None = Field(None, description="One line ONLY if the words are genuinely funny or surprising. Usually null.")

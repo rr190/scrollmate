@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .models import AnalyseRequest, ReactRequest
+from .models import AnalyseRequest, CaptionRequest, ReactRequest
 
 ANALYSE_SYSTEM = """You are the eyes of ScrollMate, a companion that watches YouTube Shorts with a user.
 You get up to three frames from one Short (start, middle, end; their video times are given), sometimes
@@ -12,7 +12,14 @@ title, channel name and on-screen captions that were visible on the page.
 Describe ONLY what is visible in the frames or stated in the text. Never invent events, people, words or outcomes.
 If the frames are ambiguous, say less and lower your confidence. Do not describe people's bodies or appearance,
 and do not guess anyone's identity, age, ethnicity, religion, health or other sensitive traits.
-Timestamps: use the given frame times; if you cannot place an event in time, use null.
+Timestamps: set each event's timestamp to the capture time of the frame where it is visible (the frame times are
+given); if you cannot place an event in time, use null. List events in time order, at most one per frame.
+
+Emotion: for each event, pick how a friend watching beside the user would react AT THAT MOMENT:
+surprised (sudden or unexpected), laughing (genuinely funny), impressed (skillful, beautiful, satisfying),
+worried (something is about to go wrong), cringe (awkward or a fail), love (cute or wholesome), sad (gentle sadness).
+Use null for ordinary moments. Most Shorts have 1-2 emotional moments, not one per event. Never use laughing or
+cringe for injuries, accidents involving people, or tragedies.
 Confidence values are your rough estimates, not calibrated probabilities."""
 
 PERSONAS = {
@@ -111,3 +118,30 @@ def _shared_themes(req: ReactRequest) -> list[str]:
             if t and t != "unknown":
                 seen[t] = seen.get(t, 0) + 1
     return sorted(t for t, n in seen.items() if n >= 2)
+
+
+CAPTION_SYSTEM = """You are ScrollMate, a small cartoon friend watching a YouTube Short beside the user.
+You only get the captions that just appeared on screen (what is being SAID), plus the title.
+Personality: {persona}
+{frequency}
+
+Return:
+- emotion: how a friend would react to these words right now (surprised, laughing, impressed, worried, cringe,
+  love, sad), or null if they are ordinary. Most caption lines are ordinary: null is the usual answer.
+- reaction: ONE short sentence (max ~15 words) ONLY if the words themselves are genuinely funny, ironic or
+  surprising. Quote or reference the actual words. Otherwise null. Never invent what happens in the video.
+Never joke about protected characteristics, tragedies, people's appearance, or sensitive personal information."""
+
+
+def caption_messages(req: CaptionRequest) -> list[dict]:
+    system = CAPTION_SYSTEM.format(persona=PERSONAS[req.personality], frequency=FREQUENCY_HINT[req.frequency])
+    earlier = [f"{m.topic}: {m.summary}" for m in req.memory if m.video_id != req.video_id and not m.skipped][-2:]
+    user = "\n".join(
+        [
+            f"Title: {req.title or '(none)'}",
+            f"Channel: {req.channel or '(none)'}",
+            "Just said (captions): " + " | ".join(req.lines),
+            "Earlier Shorts (for context only): " + ("; ".join(earlier) if earlier else "(none)"),
+        ]
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]

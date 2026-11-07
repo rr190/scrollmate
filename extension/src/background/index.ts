@@ -7,13 +7,14 @@
  * Memory lives in a JS array mirrored to chrome.storage.session, which is held
  * in RAM only (never written to disk) and survives MV3 worker restarts.
  */
-import type { AnalyseReactResponse, BgRequest, CaptureResponse, ReactResponse, TelemetryEvent } from '../shared/messages';
+import type { AnalyseReactResponse, BgRequest, CaptionReactResponse, CaptureResponse, ReactResponse, TelemetryEvent } from '../shared/messages';
 import type { Analysis, MemoryRecord, ReactionProposal, Rect } from '../shared/types';
 
 const BACKEND = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? 'http://localhost:8000';
 const MEMORY_SIZE = 3;
 const ANALYSE_TIMEOUT_MS = 20_000;
 const REACT_TIMEOUT_MS = 15_000;
+const CAPTION_TIMEOUT_MS = 8_000; // stale quickly: words on screen change every few seconds
 const MIN_CAPTURE_GAP_MS = 600; // Chrome allows ~2 captureVisibleTab calls per second
 const LOG = '[ScrollMate:bg]';
 
@@ -264,6 +265,28 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
     case 'REMEMBER':
       remember(msg.record);
       return { ok: true };
+    case 'CAPTION_REACT': {
+      try {
+        const res = await postJson<CaptionReactResponse>(
+          '/scrollmate/caption',
+          {
+            videoId: msg.videoId,
+            lines: msg.lines.slice(-12),
+            title: msg.title,
+            channel: msg.channel,
+            currentTime: msg.currentTime,
+            memory,
+            personality: msg.personality,
+            frequency: msg.frequency,
+          },
+          CAPTION_TIMEOUT_MS,
+          `caption:${msg.videoId}`,
+        );
+        return { emotion: res.emotion ?? null, reactions: Array.isArray(res.reactions) ? res.reactions : [] } satisfies CaptionReactResponse;
+      } catch (e) {
+        return { emotion: null, reactions: [], error: e instanceof Error ? e.message : String(e) } satisfies CaptionReactResponse;
+      }
+    }
     case 'REACT_ONLY': {
       try {
         return { reactions: await react(msg.currentVideoId, msg.personality, msg.frequency) } satisfies ReactResponse;

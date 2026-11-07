@@ -1,3 +1,5 @@
+import type { Emotion, EmotionCue } from './emotions';
+
 export type Personality = 'witty' | 'hype' | 'chill';
 export type Frequency = 'rare' | 'balanced' | 'chatty';
 
@@ -26,6 +28,7 @@ export interface ShortEvent {
   description: string;
   /** Model estimate, not a calibrated probability. */
   confidence: number;
+  emotion?: Emotion | null;
 }
 
 export interface Analysis {
@@ -39,6 +42,8 @@ export interface Analysis {
   understandingLevel: UnderstandingLevel;
   /** Model estimate, not a calibrated probability. */
   confidence: number;
+  /** Timed facial reactions for the character (video seconds). */
+  cues?: EmotionCue[];
 }
 
 /** One entry of the three-Short ring buffer. Never contains frames or transcripts. */
