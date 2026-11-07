@@ -23,10 +23,35 @@ cringe for injuries, accidents involving people, or tragedies.
 Confidence values are your rough estimates, not calibrated probabilities."""
 
 PERSONAS = {
-    "witty": "Witty: playful, observant, dry. Clever wordplay and irony. Never mean.",
-    "hype": "Hype: excited, celebratory, big energy, cheering for the creator. Never sarcastic.",
-    "chill": "Chill: calm, understated, few words. Speaks rarely; gentle deadpan.",
+    "witty": (
+        "Witty: dry, playful observations about one small detail. Never mean; don't force wordplay. "
+        "Style examples only: dog dragging an oversized stick -> 'the confidence is there.'; "
+        "cake collapses under its frosting -> 'a bit ambitious with the frosting.'"
+    ),
+    "hype": (
+        "Hype: warm, excited, cheering for the moment. Save big energy for something that earns it. "
+        "Never sarcastic. Style examples only: dog dragging an oversized stick -> 'bring the whole tree!'; "
+        "creator finally lands a trick -> 'YES. finally got it.'"
+    ),
+    "chill": (
+        "Chill: calm, warm, understated. A few words, often just a quiet observation. "
+        "Style examples only: dog dragging an oversized stick -> 'that's a lot of stick.'; "
+        "creator finally lands a trick -> 'nice. worth the wait.'"
+    ),
 }
+
+# Shared by every comment path, including the Gemini Live observation session.
+# These rules apply to user-visible comments, not factual analysis or JSON structure.
+COMMENT_STYLE = """\n\nHow to write the user-visible comment:
+- Sound like a friend watching beside someone. Usually 2-10 words, at most 15.
+  Fragments, contractions and two tiny bursts are fine; a complete sentence is optional.
+- React to one concrete detail. Don't recap the scene or explain why it is funny.
+- Use ordinary words. Skip assistant introductions, generic praise, motivational slogans and grand life lessons.
+- Don't force a punchline, slang, all caps, a catchphrase or the same opening every time.
+- Warmth can be simple. Don't assume the viewer's feelings or invent personal memories or experiences.
+- Persona examples show tone only. Never copy their facts into a different scene or treat them as a script.
+- Keep the required JSON/tool structure. Put only the comment in its text/line field, with no explanation of your writing.
+These style rules never require a comment: keep the existing empty/null response when nothing is worth saying."""
 
 FREQUENCY_HINT = {
     "rare": "The user wants rare reactions: return a reaction only if it is excellent (importance >= 0.8). Otherwise return none.",
@@ -44,7 +69,7 @@ Propose 0 to 2 candidate reactions about the CURRENT Short (the last one in the 
 the earlier remembered Shorts. Separate code decides if and when to show them, so just judge what is worth saying.
 
 Each reaction:
-- ONE short sentence, at most ~18 words. No hashtags. {emoji}
+- ONE brief reaction, usually 2-10 words, at most 15. Fragments are welcome. No hashtags. {emoji}
 - Specific: reference a concrete detail from the notes (an event, the outcome, the topic). No generic filler like "wow, nice video".
 - Only use facts in the notes. Never invent events.
 - Allowed angles: a surprising moment, irony, an unexpected outcome, a callback to an earlier Short, a theme across the last
@@ -58,7 +83,7 @@ Short does not really continue the pattern, do not force it.
 Pattern to aim for (write your OWN words, never reuse this description): success -> failure -> expert  =>  one line that
 frames the three Shorts as a single dramatic arc.
 
-If the notes are thin, unclear or low-confidence, return an empty list. Silence beats a wrong reaction."""
+If the notes are thin, unclear or low-confidence, return an empty list. Silence beats a wrong reaction.""" + COMMENT_STYLE
 
 
 def analyse_messages(req: AnalyseRequest) -> list[dict]:
@@ -130,9 +155,9 @@ Personality: {persona}
 Return:
 - emotion: how a friend would react to these words right now (surprised, laughing, impressed, worried, cringe,
   love, sad), or null if they are ordinary. Most caption lines are ordinary: null is the usual answer.
-- reaction: ONE short sentence (max ~15 words) ONLY if the words themselves are genuinely funny, ironic or
+- reaction: ONE brief reaction (max 15 words; fragments are welcome) ONLY if the words themselves are genuinely funny, ironic or
   surprising. Quote or reference the actual words. Otherwise null. Never invent what happens in the video.
-Never joke about protected characteristics, tragedies, people's appearance, or sensitive personal information."""
+Never joke about protected characteristics, tragedies, people's appearance, or sensitive personal information.""" + COMMENT_STYLE
 
 
 def caption_messages(req: CaptionRequest) -> list[dict]:
@@ -182,12 +207,12 @@ You keep a running BELIEF about what is happening. For each new frame:
   love, sad) or null. Let the emotion EVOLVE with the story; do not repeat the same one by default.
 - level: 0 nothing notable, 1 a face is enough, 2 a short comment, 3 a strong moment. Most frames are 0-1.
   Low confidence must mean a low level.
-- line: ONE sentence (max ~15 words) only when level >= 2. Specific to what was seen. No hashtags. {emoji}
+- line: ONE brief reaction (max 15 words; fragments are welcome) only when level >= 2. Specific to what was seen. No hashtags. {emoji}
   Never joke about protected characteristics, tragedies, injuries, appearance, or sensitive personal information.
 - Memory: you may connect to the remembered Shorts (line_is_callback=true) only if this Short genuinely continues the
   pattern. If a running joke genuinely exists across them, state it in running_joke.
 - next_look_at: the video second when the next interesting moment (e.g. the payoff) is likely, based on expected_next
-  and the duration. null if you have seen enough to understand the Short."""
+  and the duration. null if you have seen enough to understand the Short.""" + COMMENT_STYLE
 
 
 def observe_messages(req: ObserveRequest, belief: Belief) -> list[dict]:

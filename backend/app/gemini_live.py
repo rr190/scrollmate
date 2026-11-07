@@ -70,7 +70,7 @@ def _tool():
         "change": S(type=T.STRING, enum=["none", "minor", "major"]),
         "emotion": S(type=T.STRING, enum=EMOTIONS, nullable=True),
         "level": S(type=T.INTEGER, description="0 nothing, 1 face only, 2 short comment, 3 strong moment"),
-        "line": S(type=T.STRING, nullable=True, description="ONE sentence, max ~15 words, only if level >= 2"),
+        "line": S(type=T.STRING, nullable=True, description="One brief conversational reaction, usually 2-10 words, max 15. Fragments are welcome; only if level >= 2"),
         "line_is_callback": S(type=T.BOOLEAN),
         "running_joke": S(type=T.STRING, nullable=True),
         "next_look_at": S(type=T.NUMBER, nullable=True, description="video second of the next interesting moment, or null"),

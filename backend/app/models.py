@@ -128,7 +128,7 @@ class ReactResponse(Camel):
 
 
 class LLMReaction(BaseModel):
-    text: str = Field(description="ONE short sentence, max ~18 words, specific to what was observed.")
+    text: str = Field(description="One brief conversational reaction, usually 2-10 words, max 15. Fragments are welcome; use observed facts only.")
     importance: float = Field(ge=0, le=1, description="0.9+ great callback or genuinely surprising; 0.5-0.7 decent; <0.4 filler")
     is_callback: bool = Field(False, description="true if it connects the current Short to earlier remembered Shorts")
     preferred_timing: Timing = Field("after_video", description="'now' only if it must land during a specific moment; usually 'after_video'")
@@ -239,7 +239,7 @@ class LLMObserve(BaseModel):
     change: Change = Field(description="How much THIS frame changed your understanding vs the belief so far")
     emotion: Emotion | None = Field(None, description="How a friend reacts to THIS frame right now, or null")
     level: int = Field(0, ge=0, le=3, description="0 nothing, 1 face only, 2 short comment, 3 strong moment")
-    line: str | None = Field(None, description="ONE sentence, max ~15 words, only if level >= 2 and genuinely worth saying")
+    line: str | None = Field(None, description="One brief conversational reaction, usually 2-10 words, max 15. Fragments are welcome; only if level >= 2 and worth saying")
     line_is_callback: bool = Field(False, description="true if the line links to earlier remembered Shorts")
     running_joke: str | None = Field(None, description="A short running joke across the remembered Shorts, if one genuinely exists")
     next_look_at: float | None = Field(None, description="Video second when the next interesting moment is likely, or null if you have seen enough")
