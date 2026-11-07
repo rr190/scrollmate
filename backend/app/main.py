@@ -20,27 +20,45 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from . import config, mock
 from .feed import feed
-from .llm import race, structured, warm_up
+from .gemini_live import is_live, live
+from .llm import ping, race, structured, warm_up
 from .models import (
     AnalyseRequest,
     Analysis,
+    Belief,
     CaptionRequest,
     CaptionResponse,
     EmotionCue,
     Event,
     LLMAnalysis,
+    LLMObserve,
+    LLMSwipe,
     LLMCaptionReaction,
     LLMReactions,
+    MemoryItem,
+    ObserveRequest,
+    ObserveResponse,
     ReactionCandidate,
     ReactRequest,
     ReactResponse,
+    SwipeRequest,
+    SwipeResponse,
 )
-from .prompts import analyse_messages, caption_messages, react_messages
+from .prompts import (
+    FREQUENCY_HINT,
+    PERSONAS,
+    analyse_messages,
+    caption_messages,
+    observe_messages,
+    react_messages,
+    swipe_messages,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("scrollmate")
@@ -53,7 +71,10 @@ async def lifespan(_: FastAPI):
         task = asyncio.create_task(
             warm_up([config.VISION_MODEL, config.TEXT_MODEL, config.VISION_FALLBACK_MODEL, config.TEXT_FALLBACK_MODEL])
         )
+        if is_live(config.VISION_MODEL):
+            asyncio.create_task(live.warm(config.VISION_MODEL))
     yield
+    await live.reset()
     if task and not task.done():
         task.cancel()
 
@@ -152,6 +173,8 @@ def _race_path(winner: str | None) -> str:
 ANALYSE_MAX_TOKENS = 450
 REACT_MAX_TOKENS = 250
 CAPTION_MAX_TOKENS = 150
+SWIPE_MAX_TOKENS = 90
+OBSERVE_MAX_TOKENS = 380
 
 
 def _snap(t: float | None, frame_times: list[float]) -> float | None:
@@ -384,6 +407,326 @@ async def caption(req: CaptionRequest, request: Request) -> CaptionResponse:
         reactions=[r.model_dump(by_alias=True) for r in out.reactions],
     )
     return out
+
+
+# ---------- live loop: swipe (title, instant) + observe (one frame at a time) ----------
+# Per-Short belief, text only, RAM only. The extension sends only the videoId; notes stay here.
+_beliefs: OrderedDict[str, Belief] = OrderedDict()
+BELIEFS_MAX = 30
+
+
+def _belief(video_id: str, title: str = "") -> Belief:
+    b = _beliefs.get(video_id)
+    if b is None:
+        b = Belief(video_id=video_id, title=title)
+        _beliefs[video_id] = b
+        while len(_beliefs) > BELIEFS_MAX:
+            _beliefs.popitem(last=False)
+    elif title and not b.title:
+        b.title = title
+    _beliefs.move_to_end(video_id)
+    return b
+
+
+def _cap_level(level: int, confidence: float) -> int:
+    """Deterministic reaction hierarchy: low confidence can only ever earn a face."""
+    level = max(0, min(3, level))
+    if confidence < 0.5:
+        return min(level, 1)
+    if confidence < 0.75:
+        return min(level, 2)
+    return level
+
+
+def _record(b: Belief, seconds_watched: float = 0) -> MemoryItem:
+    return MemoryItem(
+        video_id=b.video_id,
+        topic=b.topic,
+        summary=b.happening or (f'"{b.title[:80]}"' if b.title else ""),
+        events=b.events[:4],
+        outcome=b.outcome,
+        mood=b.mood,
+        themes=b.themes,
+        seconds_watched=seconds_watched,
+        skipped=False,
+        running_joke=b.running_joke,
+    )
+
+
+async def _vision_call(messages: list[dict], max_tokens: int, video_id: str = "", frame: str = "", persona_line: str = ""):
+    """One frame: Gemini Live session if selected, else race the two vision models (first valid answer wins)."""
+    if is_live(config.VISION_MODEL):
+        text = persona_line + "\n" + messages[1]["content"][0]["text"]  # rules live in the session's system prompt
+        res, note = await live.observe(config.VISION_MODEL, video_id, text, frame, config.LIVE_TIMEOUT_S)
+        if res is not None:
+            return res, note
+        fb = config.VISION_FALLBACK_MODEL
+        log.info("observe %s: %s -> falling back to %s", video_id, note, fb)
+        if not fb or is_live(fb):
+            return None, None
+        res = await structured(LLMObserve, messages, fb, 0.3, max_tokens)
+        return res, (f"{note} -> {fb}" if res is not None else None)
+    models = [config.VISION_MODEL, config.VISION_FALLBACK_MODEL]
+    if config.RACE_VISION:
+        return await race(LLMObserve, messages, models, 0.3, max_tokens)
+    res = await structured(LLMObserve, messages, config.VISION_MODEL, 0.3, max_tokens)
+    if res is None and config.VISION_FALLBACK_MODEL:
+        return await structured(LLMObserve, messages, config.VISION_FALLBACK_MODEL, 0.3, max_tokens), config.VISION_FALLBACK_MODEL
+    return res, config.VISION_MODEL if res is not None else None
+
+
+@app.post("/scrollmate/swipe", response_model=SwipeResponse, response_model_by_alias=True)
+async def swipe(req: SwipeRequest, request: Request) -> SwipeResponse:
+    """Instant, title-only prediction of what kind of moment is coming. Never speaks: face only."""
+    rate_limit(request)
+    t0 = time.perf_counter()
+    b = _belief(req.video_id, req.title)
+    out = SwipeResponse()
+    path = "mock"
+    if req.title and not config.MOCK:
+        try:
+            raw, winner = await asyncio.wait_for(
+                _text_call(LLMSwipe, swipe_messages(req), temperature=0.4, max_tokens=SWIPE_MAX_TOKENS), timeout=config.SWIPE_DEADLINE_S
+            )
+        except asyncio.TimeoutError:
+            raw, winner = None, None
+            path = f"late (> {config.SWIPE_DEADLINE_S:.1f}s): stayed silent"
+        else:
+            path = _race_path(winner)
+        if raw is not None:
+            out = SwipeResponse(moment_type=raw.moment_type, emotion=raw.emotion, level=1 if raw.emotion else 0, look_for=raw.look_for[:120])
+            if b.frames_seen == 0:  # seed the belief; frames will confirm or overrule it
+                b.moment_type = raw.moment_type
+                b.expected_next = raw.look_for[:160]
+                b.confidence = min(b.confidence or 0.3, 0.3)
+                if raw.emotion:
+                    b.emotion_arc = [raw.emotion]
+                b.version += 1
+    elif not req.title:
+        path = "no title yet"
+    feed.publish(
+        "swipe_result",
+        videoId=req.video_id,
+        title=req.title,
+        path=path,
+        ms=_ms(t0),
+        momentType=out.moment_type,
+        emotion=out.emotion,
+        lookFor=out.look_for,
+    )
+    return out
+
+
+@app.post("/scrollmate/observe", response_model=ObserveResponse, response_model_by_alias=True)
+async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
+    """One frame (plus new captions) -> updated belief, a face now, maybe a line, and when to look next."""
+    rate_limit(request)
+    t0 = time.perf_counter()
+    b = _belief(req.video_id, req.title)
+    feed.publish(
+        "observe_request",
+        videoId=req.video_id,
+        n=req.frame_index,
+        of=req.max_frames,
+        t=req.frame_time,
+        duration=req.duration,
+        captions=req.captions[:4],
+        image=req.frame if (req.frame and config.DEV_FEED_IMAGES) else None,
+    )
+
+    raw: LLMObserve | None = None
+    path = "mock"
+    if config.MOCK:
+        path = "mock (no vision)"
+    elif req.frame or req.captions or req.title:
+        persona_line = f"Personality: {PERSONAS[req.personality]} {FREQUENCY_HINT[req.frequency]}"
+        raw, winner = await _vision_call(observe_messages(req, b), OBSERVE_MAX_TOKENS, req.video_id, req.frame, persona_line)
+        if winner and is_live(config.VISION_MODEL):
+            path = winner
+        else:
+            path = (f"race won by {winner}" if config.RACE_VISION else winner) if winner else "vision FAILED (see server log)"
+
+    out = ObserveResponse(belief=b, record=_record(b))
+    if raw is not None and not await request.is_disconnected():
+        conf = raw.confidence if req.frame else min(raw.confidence, 0.5)
+        prev_topic = b.topic
+        b.topic = raw.topic.strip().lower()[:40] or b.topic
+        b.happening = raw.happening.strip()[:240]
+        b.expected_next = raw.expected_next.strip()[:160]
+        b.moment_type = raw.moment_type
+        b.outcome = raw.outcome or b.outcome
+        b.mood = raw.mood
+        b.themes = [t.strip().lower()[:24] for t in raw.themes if t.strip()][:4] or b.themes
+        b.confidence = conf
+        b.running_joke = (raw.running_joke or "").strip()[:120] or b.running_joke
+        b.events = (
+            b.events
+            + [Event(timestamp=round(req.frame_time, 1), description=raw.seen_now.strip()[:200], confidence=conf, emotion=raw.emotion)]
+        )[-4:]
+        if raw.emotion and (not b.emotion_arc or b.emotion_arc[-1] != raw.emotion):
+            b.emotion_arc = (b.emotion_arc + [raw.emotion])[-6:]
+        b.frames_seen += 1
+        b.version += 1
+
+        level = _cap_level(raw.level, conf)
+        out.emotion = raw.emotion if level >= 1 else None
+        out.level = level
+        out.change = raw.change if prev_topic != "unknown" or b.frames_seen > 1 else "major"
+        if level >= 2 and raw.line:
+            text = " ".join(raw.line.split())
+            if safe(text):
+                out.reactions.append(
+                    ReactionCandidate(
+                        text=text,
+                        importance=0.9 if level == 3 else 0.6,
+                        target_video_id=req.video_id,
+                        preferred_timing="after_video",
+                        expires_after_seconds=60 if raw.line_is_callback else 25,
+                        requires_quiet_moment=True,
+                        is_callback=raw.line_is_callback,
+                    )
+                )
+            else:
+                feed.publish("reaction_blocked", videoId=req.video_id, text=text)
+
+        nxt = raw.next_look_at
+        if nxt is None and req.frame_index == 1 and req.max_frames > 1 and req.duration > 6:
+            # One frame is rarely enough to judge a Short: look again halfway through what's left.
+            nxt = req.frame_time + (req.duration - req.frame_time) / 2
+        if nxt is not None and req.duration:
+            nxt = min(max(nxt, req.frame_time + 1.5), req.duration - 0.5)
+            if nxt <= req.frame_time:
+                nxt = None
+        out.next_capture_at = nxt
+        out.final = req.frame_index >= req.max_frames or nxt is None
+        out.belief = b
+        out.record = _record(b)
+    else:
+        out.final = req.frame_index >= req.max_frames
+
+    feed.publish(
+        "observe_result",
+        videoId=req.video_id,
+        n=req.frame_index,
+        path=path,
+        ms=_ms(t0),
+        seen=b.events[-1].description if (raw is not None and b.events) else None,
+        emotion=out.emotion,
+        level=out.level,
+        change=out.change,
+        confidence=round(b.confidence, 2),
+        arc=b.emotion_arc,
+        happening=b.happening,
+        nextCaptureAt=out.next_capture_at,
+        final=out.final,
+        reactions=[r.model_dump(by_alias=True) for r in out.reactions],
+        runningJoke=b.running_joke,
+    )
+    return out
+
+
+# ---------- model settings (dev): switch providers from /ui at runtime ----------
+class ModelSettings(BaseModel):
+    preset: str | None = None
+    vision: str | None = None
+    vision_fallback: str | None = None
+    text: str | None = None
+    text_fallback: str | None = None
+    race_text: bool | None = None
+
+
+def _provider_key(model: str | None) -> str | None:
+    if not model:
+        return None
+    return {"openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY", "gemini": "GEMINI_API_KEY", "gemini-live": "GEMINI_API_KEY"}.get(
+        model.split("/", 1)[0]
+    )
+
+
+def _settings_view() -> dict:
+    cur = config.current_models()
+    return {
+        "current": cur,
+        "mock": config.MOCK,
+        "presets": {
+            k: {**{f: v for f, v in p.items() if f != "keys"}, "available": all(config.has_key(x) for x in p["keys"]), "keys": p["keys"]}
+            for k, p in config.PRESETS.items()
+        },
+        "activePreset": next(
+            (
+                k
+                for k, p in config.PRESETS.items()
+                if all(p[f] == cur[f] for f in ("vision", "vision_fallback", "text", "text_fallback"))
+            ),
+            None,
+        ),
+        "knownModels": config.KNOWN_MODELS,
+        "textOnly": sorted(config.TEXT_ONLY),
+        "keys": {k: config.has_key(k) for k in ("OPENAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY")},
+    }
+
+
+@app.get("/scrollmate/settings", include_in_schema=False)
+async def get_settings() -> dict:
+    return _settings_view()
+
+
+@app.post("/scrollmate/settings", include_in_schema=False)
+async def set_settings(body: ModelSettings) -> dict:
+    """Switch models immediately (in memory; restarting the server goes back to .env)."""
+    cur = config.current_models()
+    if body.preset:
+        p = config.PRESETS.get(body.preset)
+        if not p:
+            raise HTTPException(400, f"unknown preset {body.preset!r}")
+        missing = [k for k in p["keys"] if not config.has_key(k)]
+        if missing:
+            raise HTTPException(400, f"missing {', '.join(missing)} in backend/.env")
+        new = {f: p[f] for f in ("vision", "vision_fallback", "text", "text_fallback")}
+    else:
+        new = {f: getattr(body, f) if getattr(body, f) is not None else cur[f] for f in ("vision", "vision_fallback", "text", "text_fallback")}
+        for f in ("vision_fallback", "text_fallback"):
+            if new[f] == "":
+                new[f] = None
+    if not new["vision"] or not new["text"]:
+        raise HTTPException(400, "vision and text models are required")
+    for f in ("vision", "vision_fallback"):
+        if new[f] in config.TEXT_ONLY:
+            raise HTTPException(400, f"{new[f]} is text-only and cannot be the {f.replace('_', ' ')} model")
+    for f in ("text", "text_fallback"):
+        if is_live(new[f]):
+            raise HTTPException(400, f"{new[f]} is a Gemini Live model: it can only be the vision model")
+    if is_live(new["vision_fallback"]):
+        raise HTTPException(400, "the vision fallback must be a regular model (it covers Live stalls)")
+    for f, m in new.items():
+        k = _provider_key(m)
+        if m and k and not config.has_key(k):
+            raise HTTPException(400, f"{m} needs {k} in backend/.env")
+    race_text = body.race_text if body.race_text is not None else cur["race_text"]
+    config.apply_models(new["vision"], new["text"], new["vision_fallback"], new["text_fallback"], race_text)
+    _cache.clear()  # analyses from the old model shouldn't be reused
+    await live.reset()  # close Live sessions from the previous model
+    if is_live(new["vision"]) and not config.MOCK:
+        asyncio.create_task(live.warm(new["vision"]))  # spare session ready for the next Short
+    log.info("models switched: %s", config.current_models())
+    feed.publish("status", note=f"models switched -> vision {new['vision']} | text {new['text']}" + (" (raced)" if race_text else ""))
+    if not config.MOCK and config.WARMUP:
+        asyncio.create_task(warm_up([new["vision"], new["text"], new["vision_fallback"], new["text_fallback"]]))
+    return _settings_view()
+
+
+@app.post("/scrollmate/settings/ping", include_in_schema=False)
+async def ping_models() -> dict:
+    """Time a 1-token request to each active model, all at once."""
+    cur = config.current_models()
+    slots = [(f, cur[f]) for f in ("vision", "vision_fallback", "text", "text_fallback") if cur[f]]
+    results = await asyncio.gather(*(ping(m) for _, m in slots))
+    return {
+        "results": [
+            {"slot": f, "model": m, "ms": None if dt is None else int(dt * 1000), "error": err}
+            for (f, m), (dt, err) in zip(slots, results)
+        ]
+    }
 
 
 # ---------- live feed (dev): extension events in, SSE out ----------

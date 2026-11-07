@@ -7,18 +7,31 @@
  * Memory lives in a JS array mirrored to chrome.storage.session, which is held
  * in RAM only (never written to disk) and survives MV3 worker restarts.
  */
-import type { AnalyseReactResponse, BgRequest, CaptionReactResponse, CaptureResponse, ReactResponse, TelemetryEvent } from '../shared/messages';
+import type {
+  AnalyseReactResponse,
+  BgRequest,
+  CaptionReactResponse,
+  CaptureResponse,
+  ObserveResponse,
+  ReactResponse,
+  SwipeResponse,
+  TelemetryEvent,
+} from '../shared/messages';
 import type { Analysis, MemoryRecord, ReactionProposal, Rect } from '../shared/types';
 
 const BACKEND = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? 'http://localhost:8000';
 const MEMORY_SIZE = 3;
 const ANALYSE_TIMEOUT_MS = 20_000;
 const REACT_TIMEOUT_MS = 15_000;
-const CAPTION_TIMEOUT_MS = 8_000; // stale quickly: words on screen change every few seconds
+const CAPTION_TIMEOUT_MS = 8_000;
+const SWIPE_TIMEOUT_MS = 3_000;
+const OBSERVE_TIMEOUT_MS = 15_000; // stale quickly: words on screen change every few seconds
 const MIN_CAPTURE_GAP_MS = 600; // Chrome allows ~2 captureVisibleTab calls per second
 const LOG = '[ScrollMate:bg]';
 
 let memory: MemoryRecord[] = [];
+// Latest belief-based record per Short; committed to memory when the Short ends (never half-finished).
+const pendingRecords = new Map<string, MemoryRecord>();
 const analysisCache = new Map<string, Analysis>(); // per browser session, by video ID
 const inflight = new Map<string, AbortController>();
 let activeVideoId: string | null = null;
@@ -85,7 +98,7 @@ let telemetry: TelemetryEvent[] = [];
 let telemetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function queueTelemetry(ev: TelemetryEvent) {
-  telemetry.push({ ...ev, at: Date.now() });
+  telemetry.push({ ...ev, sentAt: Date.now() }); // wall clock; `at` stays the video time
   if (telemetry.length > 100) telemetry = telemetry.slice(-100);
   if (!telemetryTimer) telemetryTimer = setTimeout(flushTelemetry, 300);
 }
@@ -204,7 +217,60 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
     }
     case 'SHORT_STARTED':
       activeVideoId = msg.videoId;
+      for (const [id, rec] of pendingRecords) {
+        if (id !== msg.videoId) {
+          remember(rec); // the previous Short ended: commit what we understood of it
+          pendingRecords.delete(id);
+        }
+      }
       return { ok: true };
+    case 'SWIPE': {
+      try {
+        const res = await postJson<SwipeResponse>(
+          '/scrollmate/swipe',
+          { videoId: msg.videoId, title: msg.title, channel: msg.channel, memory, personality: msg.personality, frequency: msg.frequency },
+          SWIPE_TIMEOUT_MS,
+          `swipe:${msg.videoId}`,
+        );
+        return res;
+      } catch (e) {
+        return { momentType: 'other', emotion: null, level: 0, lookFor: '', error: String(e) } satisfies SwipeResponse;
+      }
+    }
+    case 'OBSERVE': {
+      try {
+        const res = await postJson<ObserveResponse & { record?: MemoryRecord }>(
+          '/scrollmate/observe',
+          {
+            videoId: msg.videoId,
+            frame: msg.frame,
+            frameTime: msg.frameTime,
+            duration: msg.duration,
+            frameIndex: msg.frameIndex,
+            maxFrames: msg.maxFrames,
+            title: msg.title,
+            channel: msg.channel,
+            captions: msg.captions.slice(-10),
+            memory,
+            personality: msg.personality,
+            frequency: msg.frequency,
+          },
+          OBSERVE_TIMEOUT_MS,
+          `observe:${msg.videoId}`,
+        );
+        if (res.record && res.record.topic !== 'unknown') {
+          const rec = { ...res.record, secondsWatched: Math.round(msg.frameTime), skipped: false };
+          if (res.final) {
+            remember(rec);
+            pendingRecords.delete(msg.videoId);
+          } else pendingRecords.set(msg.videoId, rec);
+        }
+        const { record: _r, ...rest } = res;
+        return rest;
+      } catch (e) {
+        return { emotion: null, level: 0, change: 'none', reactions: [], nextCaptureAt: null, final: false, error: String(e) } satisfies ObserveResponse;
+      }
+    }
     case 'SHORT_SKIPPED':
       remember({
         videoId: msg.videoId,
@@ -299,6 +365,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
     case 'CLEAR_MEMORY':
       abortAll();
       memory = [];
+      pendingRecords.clear();
       analysisCache.clear();
       saveMemory();
       return { ok: true };

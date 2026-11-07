@@ -24,6 +24,21 @@ export type BgRequest =
   | { type: 'CLEAR_MEMORY' }
   | { type: 'CANCEL_ALL' }
   | { type: 'OPEN_STAGE' }
+  | { type: 'SWIPE'; videoId: string; title: string; channel: string; personality: Personality; frequency: Frequency }
+  | {
+      type: 'OBSERVE';
+      videoId: string;
+      frame: string; // one base64 JPEG, or '' for text only
+      frameTime: number;
+      duration: number;
+      frameIndex: number;
+      maxFrames: number;
+      title: string;
+      channel: string;
+      captions: string[];
+      personality: Personality;
+      frequency: Frequency;
+    }
   | {
       type: 'CAPTION_REACT';
       videoId: string;
@@ -51,6 +66,23 @@ export interface AnalyseReactResponse {
 export interface CaptionReactResponse {
   emotion: Emotion | null;
   reactions: ReactionProposal[];
+  error?: string;
+}
+export interface SwipeResponse {
+  momentType: string;
+  emotion: Emotion | null;
+  level: number;
+  lookFor: string;
+  error?: string;
+}
+export interface ObserveResponse {
+  emotion: Emotion | null;
+  level: number;
+  change: 'none' | 'minor' | 'major';
+  reactions: ReactionProposal[];
+  nextCaptureAt: number | null;
+  final: boolean;
+  belief?: { topic: string; happening: string; confidence: number; emotionArc: string[] };
   error?: string;
 }
 export interface ReactResponse {

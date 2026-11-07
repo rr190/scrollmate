@@ -57,6 +57,7 @@ export interface MemoryRecord {
   themes: string[];
   secondsWatched: number;
   skipped: boolean;
+  runningJoke?: string | null;
 }
 
 export type PreferredTiming = 'now' | 'after_video' | 'next_gap';

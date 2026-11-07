@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .models import AnalyseRequest, CaptionRequest, ReactRequest
+from .models import AnalyseRequest, Belief, CaptionRequest, ObserveRequest, ReactRequest, SwipeRequest
 
 ANALYSE_SYSTEM = """You are the eyes of ScrollMate, a companion that watches YouTube Shorts with a user.
 You get up to three frames from one Short (start, middle, end; their video times are given), sometimes
@@ -52,9 +52,11 @@ Each reaction:
 - Never joke about protected characteristics, tragedies, accidents with injuries, people's appearance or bodies, or
   sensitive personal information. If the Short is about something sad or serious, return no reactions.
 
-CROSS-SHORT CALLBACKS (most valuable): if two or more remembered Shorts share a topic or theme, you MUST include one
-callback reaction that connects them as a story or pattern (set is_callback=true, importance 0.85-1.0).
-Example: cake success -> cake burnt -> professional cake  =>  "We've just witnessed the rise, fall and redemption of the entire baking industry."
+CROSS-SHORT CALLBACKS (most valuable): if two or more remembered Shorts genuinely share a topic or theme, include one
+callback reaction that connects them as a story or pattern (set is_callback=true, importance 0.85-1.0). If the current
+Short does not really continue the pattern, do not force it.
+Pattern to aim for (write your OWN words, never reuse this description): success -> failure -> expert  =>  one line that
+frames the three Shorts as a single dramatic arc.
 
 If the notes are thin, unclear or low-confidence, return an empty list. Silence beats a wrong reaction."""
 
@@ -145,3 +147,80 @@ def caption_messages(req: CaptionRequest) -> list[dict]:
         ]
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+SWIPE_SYSTEM = """You are ScrollMate, a cartoon friend about to watch a YouTube Short with the user. You only have its
+title and channel; you have NOT seen the video yet. Predict what kind of moment it is building towards:
+attempt ("I tried..."), reveal ("wait for it", "the ending"), pov ("POV:", relatable), surprise ("nobody expected"),
+tutorial ("how to"), continuation ("part 2"), reaction, or other.
+emotion: a NON-specific first face that fits the setup (curious, surprised...), never a judgement of content you have
+not seen. null if the title tells you nothing. look_for: what to watch for in the frames."""
+
+
+def swipe_messages(req: SwipeRequest) -> list[dict]:
+    recent = [m.topic for m in req.memory if not m.skipped and m.topic != "unknown"][-3:]
+    user = "\n".join(
+        [
+            f"Title: {req.title or '(none)'}",
+            f"Channel: {req.channel or '(none)'}",
+            "Recent Shorts the user watched: " + (", ".join(recent) if recent else "(none)"),
+        ]
+    )
+    return [{"role": "system", "content": SWIPE_SYSTEM}, {"role": "user", "content": user}]
+
+
+OBSERVE_SYSTEM = """You are ScrollMate, a cartoon friend watching a YouTube Short beside the user, one frame at a time.
+Personality: {persona}
+{frequency}
+
+You keep a running BELIEF about what is happening. For each new frame:
+- Describe only what is visible (seen_now). Never invent events, words or outcomes. Do not describe people's bodies or
+  appearance, and do not guess identity, age, ethnicity, religion, health or other sensitive traits.
+- Update the belief (topic, happening, expected_next, moment_type, outcome only if visible, mood, themes, confidence).
+- change: none (same as before), minor (more detail), major (it turned out differently than expected, or the payoff).
+- emotion: how a friend reacts to THIS frame right now (curious, surprised, laughing, impressed, worried, cringe,
+  love, sad) or null. Let the emotion EVOLVE with the story; do not repeat the same one by default.
+- level: 0 nothing notable, 1 a face is enough, 2 a short comment, 3 a strong moment. Most frames are 0-1.
+  Low confidence must mean a low level.
+- line: ONE sentence (max ~15 words) only when level >= 2. Specific to what was seen. No hashtags. {emoji}
+  Never joke about protected characteristics, tragedies, injuries, appearance, or sensitive personal information.
+- Memory: you may connect to the remembered Shorts (line_is_callback=true) only if this Short genuinely continues the
+  pattern. If a running joke genuinely exists across them, state it in running_joke.
+- next_look_at: the video second when the next interesting moment (e.g. the payoff) is likely, based on expected_next
+  and the duration. null if you have seen enough to understand the Short."""
+
+
+def observe_messages(req: ObserveRequest, belief: Belief) -> list[dict]:
+    system = OBSERVE_SYSTEM.format(
+        persona=PERSONAS[req.personality],
+        frequency=FREQUENCY_HINT[req.frequency],
+        emoji="At most one emoji." if req.personality == "hype" else "No emojis.",
+    )
+    prior = {
+        "moment_type": belief.moment_type,
+        "topic": belief.topic,
+        "happening": belief.happening,
+        "expected_next": belief.expected_next,
+        "events_so_far": [f"{e.timestamp}s: {e.description}" for e in belief.events],
+        "emotion_arc": belief.emotion_arc,
+        "confidence": belief.confidence,
+    }
+    memory = [
+        {"topic": m.topic, "summary": m.summary, "outcome": m.outcome, "skipped": m.skipped, "running_joke": m.running_joke}
+        for m in req.memory
+        if m.video_id != req.video_id
+    ]
+    lines = [
+        f"Title: {req.title or '(none)'} | Channel: {req.channel or '(none)'}",
+        f"Frame {req.frame_index} of at most {req.max_frames}, at {req.frame_time:.1f}s"
+        + (f" of a {req.duration:.0f}s Short." if req.duration else "."),
+        "New captions: " + (" | ".join(req.captions) if req.captions else "(none)"),
+        "Belief so far: " + json.dumps(prior, ensure_ascii=False),
+        "Remembered Shorts (oldest first): " + json.dumps(memory, ensure_ascii=False),
+    ]
+    if not req.frame:
+        lines.append("No image this time: update from the text only and keep confidence low.")
+    content: list[dict] = [{"type": "text", "text": "\n".join(lines)}]
+    if req.frame:
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{req.frame}"}})
+    return [{"role": "system", "content": system}, {"role": "user", "content": content}]

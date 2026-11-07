@@ -5,3 +5,4 @@ litellm>=1.55
 instructor>=1.7
 python-dotenv>=1.0
 mcp>=1.0  # litellm's anthropic provider imports it
+google-genai>=1.30  # Gemini Live vision lane (optional preset)

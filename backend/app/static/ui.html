@@ -88,7 +88,15 @@
   .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent;
     border-radius: 50%; animation: s .7s linear infinite; vertical-align: -2px; }
   @keyframes s { to { transform: rotate(360deg); } }
-  .feed-wrap { grid-column: 1 / -1; }
+  .feed-wrap, .models-wrap { grid-column: 1 / -1; }
+  .presets { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+  .preset { text-align: left; padding: 10px 12px; border-radius: 10px; }
+  .preset b { display: block; font-size: 14px; }
+  .preset span { display: block; font-weight: 400; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .preset[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  .preset:disabled { opacity: .5; cursor: not-allowed; }
+  .slots { display: grid; gap: 0 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); margin-top: 6px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
   .feed-wrap h2 { flex-wrap: wrap; }
   .feed { display: grid; gap: 10px; margin-top: 10px; max-height: 70vh; overflow-y: auto; }
   .short { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 8px;
@@ -118,6 +126,27 @@
 </header>
 
 <main>
+  <!-- Models -->
+  <section class="models-wrap">
+    <h2>🧠 Models <span class="k" id="modelsState" style="font-weight:400"></span></h2>
+    <div class="presets" id="presets" role="radiogroup" aria-label="Provider preset"></div>
+    <div class="slots">
+      <div><label for="mVision">Vision (frames)</label><input type="text" id="mVision" list="knownModels"></div>
+      <div><label for="mVisionFb">Vision fallback</label><input type="text" id="mVisionFb" list="knownModels" placeholder="none"></div>
+      <div><label for="mText">Text (reactions, captions)</label><input type="text" id="mText" list="knownModels"></div>
+      <div><label for="mTextFb">Text fallback / race partner</label><input type="text" id="mTextFb" list="knownModels" placeholder="none"></div>
+    </div>
+    <datalist id="knownModels"></datalist>
+    <label class="check"><input type="checkbox" id="mRace"> Race text models (ask both at once, first valid answer wins)</label>
+    <div class="btns">
+      <button class="primary" id="mApply">Apply custom</button>
+      <button id="mPing">⚡ Speed test</button>
+    </div>
+    <div id="modelsErr" class="err" hidden></div>
+    <div id="pingOut"></div>
+    <div class="note">Switches instantly for the extension and this page. It's in memory only: restarting the backend goes back to <code>backend/.env</code>. Model IDs are LiteLLM strings (<code>provider/model</code>).</div>
+  </section>
+
   <!-- 0. Live feed -->
   <section class="feed-wrap">
     <h2><span class="dot" id="feedDot"></span> Live from the extension
@@ -242,7 +271,8 @@ async function health() {
     ? `${dot} <span>mode <b>${r.data.mock ? 'MOCK (no LLM)' : 'live LLM'}</b></span>
        <span>vision <b>${esc(r.data.visionModel)}</b></span>
        <span>text <b>${esc(r.data.textModel)}</b></span>
-       <span>fallback <b>${esc(r.data.textFallbackModel ?? 'none')}</b></span>`
+       <span>text fallback <b>${esc(r.data.textFallbackModel ?? 'none')}</b></span>
+       <span>vision fallback <b>${esc(r.data.visionFallbackModel ?? 'none')}</b></span>`
     : `${dot} backend not reachable`;
 }
 
@@ -440,6 +470,58 @@ $('reactBtn').onclick = async () => {
     : '<div class="silent">No reactions. The model (or the safety filter) chose silence for this Short.</div>';
 };
 
+// ---------- models ----------
+async function loadModels(view) {
+  if (!view) {
+    const r = await call('GET', '/scrollmate/settings');
+    if (!r.ok) { $('modelsState').textContent = 'unavailable'; return; }
+    view = r.data;
+  }
+  const cur = view.current;
+  $('presets').innerHTML = Object.entries(view.presets).map(([k, p]) => `
+    <button class="preset" role="radio" aria-checked="${view.activePreset === k}" data-preset="${k}" ${p.available ? '' : 'disabled'}
+      title="${p.available ? '' : 'Missing ' + esc(p.keys.join(', ')) + ' in backend/.env'}">
+      <b>${esc(p.label)}${view.activePreset === k ? ' ✓' : ''}</b>
+      <span>${esc(p.note)}</span>
+      <span>${p.available ? '' : '🔒 needs ' + esc(p.keys.join(', '))}</span>
+    </button>`).join('');
+  $('mVision').value = cur.vision || '';
+  $('mVisionFb').value = cur.vision_fallback || '';
+  $('mText').value = cur.text || '';
+  $('mTextFb').value = cur.text_fallback || '';
+  $('mRace').checked = !!cur.race_text;
+  $('knownModels').innerHTML = view.knownModels.map((m) => `<option value="${esc(m)}">${view.textOnly.includes(m) ? 'text only' : ''}</option>`).join('');
+  $('modelsState').textContent = view.mock ? 'MOCK mode: no LLM calls are made' : (view.activePreset ? `preset: ${view.presets[view.activePreset].label}` : 'custom');
+}
+async function applyModels(body) {
+  $('modelsErr').hidden = true;
+  const r = await call('POST', '/scrollmate/settings', body);
+  if (!r.ok) { $('modelsErr').textContent = r.error; $('modelsErr').hidden = false; return; }
+  $('pingOut').innerHTML = '';
+  await loadModels(r.data);
+  health();
+}
+$('presets').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-preset]');
+  if (b && !b.disabled) applyModels({ preset: b.dataset.preset });
+});
+$('mApply').onclick = () => applyModels({
+  vision: $('mVision').value.trim(), vision_fallback: $('mVisionFb').value.trim(),
+  text: $('mText').value.trim(), text_fallback: $('mTextFb').value.trim(), race_text: $('mRace').checked,
+});
+$('mPing').onclick = async () => {
+  const btn = $('mPing');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Testing…';
+  const r = await call('POST', '/scrollmate/settings/ping');
+  btn.disabled = false; btn.textContent = '⚡ Speed test';
+  if (!r.ok) { $('pingOut').innerHTML = `<div class="err">${esc(r.error)}</div>`; return; }
+  $('pingOut').innerHTML = `<table style="margin-top:10px"><thead><tr><th>Slot</th><th>Model</th><th>1-token round trip</th></tr></thead><tbody>` +
+    r.data.results.map((x) => `<tr><td>${esc(x.slot.replace('_', ' '))}</td><td><code>${esc(x.model)}</code></td>` +
+      `<td class="${x.ms == null ? 's5' : x.ms < 500 ? 's2' : 's4'}">${x.ms == null ? 'failed: ' + esc(x.error) : x.ms + ' ms'}</td></tr>`).join('') +
+    `</tbody></table><div class="note">This measures the connection only. A real reaction adds generation time: about +0.1–0.5 s for text, +1–3 s for an image.</div>`;
+};
+loadModels();
+
 // ---------- live feed ----------
 const shorts = new Map();   // videoId -> {el, tl, lastDecision: Map<text, code>}
 let feedPaused = false, liveId = null, es = null;
@@ -520,6 +602,25 @@ function onFeedEvent(ev) {
       line(card, ev.ts, ev.decision.replace(/_/g, ' '), ev.decision, `${esc(ev.reason)} <span class="k">· “${esc(ev.text.slice(0, 70))}${ev.text.length > 70 ? '…' : ''}” at ${ev.currentTime}s</span>${where}`);
       break;
     }
+    case 'swipe_result':
+      line(card, ev.ts, 'title AI', 'ai', `${ev.emotion ? (EMO[ev.emotion] || '') + ' <b>' + esc(ev.emotion) + '</b> · ' : ''}moment <b>${esc(ev.momentType)}</b>${ev.lookFor ? ' · look for: ' + esc(ev.lookFor) : ''} <span class="k">· ${ev.ms} ms · ${esc(ev.path)}</span>`);
+      break;
+    case 'observe_request':
+      if (ev.image) card.el.querySelector('.img').innerHTML = `<img class="strip" alt="what the AI saw" src="data:image/jpeg;base64,${ev.image}">`;
+      line(card, ev.ts, `observe ${ev.n}/${ev.of}`, 'ai', `frame at ${ev.t}s${ev.duration ? ' of ' + Math.round(ev.duration) + 's' : ''}${ev.captions?.length ? ' + captions' : ''}`);
+      break;
+    case 'observe_result': {
+      const failed = /FAILED/.test(ev.path || '');
+      const arc = (ev.arc || []).map((e) => EMO[e] || e).join(' → ');
+      line(card, ev.ts, failed ? 'saw: FAILED' : `saw ${ev.n}`, failed ? 'err' : 'ai',
+        `${esc(ev.seen || '')} ${ev.emotion ? (EMO[ev.emotion] || '') + ' <b>' + esc(ev.emotion) + '</b>' : ''}` +
+        ` <span class="k">· level ${ev.level} · ${esc(ev.change)} change · conf ${ev.confidence} · ${ev.ms} ms · ${esc(ev.path)}</span>` +
+        (arc ? `<br><span class="k">arc:</span> ${arc}` : '') +
+        (ev.reactions?.length ? `<br><span class="k">line:</span> ${ev.reactions.map((r) => '“' + esc(r.text) + '” (' + r.importance.toFixed(2) + (r.isCallback ? ', callback' : '') + ')').join(' ')}` : '') +
+        (ev.final ? ' <span class="chip">final</span>' : (ev.nextCaptureAt != null ? ` <span class="k">· next frame ≈ ${ev.nextCaptureAt}s</span>` : '')) +
+        (ev.runningJoke ? `<br><span class="k">running joke:</span> ${esc(ev.runningJoke)}` : ''));
+      break;
+    }
     case 'caption_request':
       line(card, ev.ts, 'captions', 'ai', `“${esc((ev.lines || []).join(' | '))}”${ev.at != null ? ` <span class="k">at ${ev.at}s</span>` : ''}`);
       break;
@@ -533,7 +634,7 @@ function onFeedEvent(ev) {
       line(card, ev.ts, 'note', '', esc(ev.note || ''));
       break;
     case 'emotion':
-      line(card, ev.ts, 'FACE', 'emotion', `<span style="font-size:18px">${EMO[ev.emotion] || ''}</span> <b>${esc(ev.emotion)}</b> <span class="k">at ${ev.at}s (moment at ${ev.t}s)${ev.via ? ' · from ' + esc(ev.via) : ''}</span>`);
+      line(card, ev.ts, 'FACE', 'emotion', `<span style="font-size:18px">${EMO[ev.emotion] || ''}</span> <b>${esc(ev.emotion)}</b> <span class="k">at ${ev.at}s (moment at ${ev.t}s)${ev.via ? ' · from ' + esc(ev.via) : ''}${ev.sinceSwipeMs != null ? ' · ' + ev.sinceSwipeMs + ' ms after swipe' : ''}</span>`);
       break;
     case 'delivered':
       line(card, ev.ts, 'SHOWN', 'delivered', `<span class="bubble">${esc(ev.text)}</span> <span class="k">${esc(ev.mode)} · ${esc(ev.reason)}</span>`);

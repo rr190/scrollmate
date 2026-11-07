@@ -7,7 +7,7 @@
  * the analysis arrives near the end of the first play, so cues mostly fire on the loop.
  * Pure: time is injected so it can be tested without a browser.
  */
-export type Emotion = 'surprised' | 'laughing' | 'impressed' | 'worried' | 'cringe' | 'love' | 'sad';
+export type Emotion = 'curious' | 'surprised' | 'laughing' | 'impressed' | 'worried' | 'cringe' | 'love' | 'sad';
 
 export interface EmotionCue {
   t: number; // video seconds
@@ -70,6 +70,13 @@ export class CueTrack {
     }
     if (fired) this.active = { emotion: fired.emotion, cue: fired, until: now + HOLD_MS + HOLD_EXTRA_MS * fired.intensity };
     return fired;
+  }
+
+  /** Remember a cue so it replays in sync on the next loop (does not fire it now). */
+  add(videoId: string, cue: EmotionCue) {
+    if (videoId !== this.videoId) this.load(videoId, []);
+    if (this.cues.some((c) => Math.abs(c.t - cue.t) < 1)) return;
+    this.cues = [...this.cues, cue].sort((a, b) => a.t - b.t);
   }
 
   /** Show a face right now for the Short on screen (e.g. reacting to captions just said). */

@@ -23,7 +23,8 @@ _clients: dict[str, object] = {}
 def _mode_for(model: str) -> str:
     # Groq validates tool calls server-side against the schema and rejects near-misses,
     # so for Groq we use JSON mode and let Pydantic validate (and Instructor retry) instead.
-    return "json" if model.startswith("groq/") else "tools"
+    # Gemini's function schema rejects some JSON-schema features (e.g. nullable unions), so JSON mode too.
+    return "json" if model.startswith(("groq/", "gemini/")) else "tools"
 
 
 def _get_client(mode: str):
@@ -52,6 +53,9 @@ def _extra_for(model: str, temperature: float) -> dict:
         extra["reasoning_effort"] = config.OPENAI_REASONING  # these models only accept the default temperature
     elif model.startswith("groq/qwen/"):
         extra["reasoning_effort"] = "none"
+        extra["temperature"] = temperature
+    elif model.startswith("gemini/"):
+        extra["reasoning_effort"] = "disable"  # Flash thinking off: ~1.6 s vision vs much slower with thinking
         extra["temperature"] = temperature
     elif model.startswith("groq/openai/gpt-oss"):
         extra["reasoning_effort"] = "low"
@@ -103,7 +107,7 @@ async def warm_up(models: list[str]) -> None:
 
     for mode in ("json", "tools"):
         _get_client(mode)
-    for model in dict.fromkeys(m for m in models if m):  # unique, keep order
+    for model in dict.fromkeys(m for m in models if m and not m.startswith("gemini-live/")):  # unique, keep order
         t0 = asyncio.get_running_loop().time()
         try:
             extra = _extra_for(model, 0.0)
@@ -120,6 +124,8 @@ async def structured(
     response_model: type[T], messages: list[dict], model: str, temperature: float = 0.4, max_tokens: int = 700
 ) -> T | None:
     """Return a validated `response_model`, or None on any failure (timeout, bad JSON, provider error, rate limit)."""
+    if model.startswith("gemini-live/"):
+        return None  # Live models only serve the /observe vision lane (see gemini_live.py); callers fall back
     try:
         client = _get_client(_mode_for(model))
         coro = client.chat.completions.create(  # type: ignore[attr-defined]
@@ -135,3 +141,23 @@ async def structured(
     except Exception as e:  # noqa: BLE001 - we deliberately degrade to "no reaction"
         log.warning("structured() failed for %s on %s: %s: %s", response_model.__name__, model, type(e).__name__, str(e)[:300])
         return None
+
+
+async def ping(model: str) -> tuple[float | None, str | None]:
+    """1-token round trip, for the speed column in /ui. Returns (seconds, error)."""
+    import litellm
+
+    if model.startswith("gemini-live/"):
+        from .gemini_live import live
+
+        dt = await live.warm(model)  # time to open a session (and keep it as the spare)
+        return (dt, None) if dt is not None else (None, "live connect failed (see server log)")
+    t0 = asyncio.get_running_loop().time()
+    try:
+        await asyncio.wait_for(
+            litellm.acompletion(model=model, messages=[{"role": "user", "content": "ok"}], max_tokens=16, **_extra_for(model, 0.0)),
+            timeout=config.LLM_TIMEOUT_S,
+        )
+        return asyncio.get_running_loop().time() - t0, None
+    except Exception as e:  # noqa: BLE001
+        return None, f"{type(e).__name__}: {str(e)[:160]}"

@@ -24,6 +24,7 @@ const FACES: Record<Mood, Face> = {
   idle: { eyes: 'dot', mouth: 'cat', brows: 'none', extras: [] },
   watching: { eyes: 'big', mouth: 'cat', brows: 'none', extras: [] },
   thinking: { eyes: 'up', mouth: 'flat', brows: 'none', extras: ['thought'] },
+  curious: { eyes: 'big', mouth: 'oSmall', brows: 'up', extras: [] },
   amused: { eyes: 'happy', mouth: 'smile', brows: 'none', extras: ['sparkles', 'blush'] },
   speaking: { eyes: 'dot', mouth: 'talk', brows: 'none', extras: ['sparkles'] },
   sleeping: { eyes: 'closed', mouth: 'oSmall', brows: 'none', extras: ['zzz'] },

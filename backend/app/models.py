@@ -20,7 +20,10 @@ Personality = Literal["witty", "hype", "chill"]
 Frequency = Literal["rare", "balanced", "chatty"]
 Timing = Literal["now", "after_video", "next_gap"]
 # How a friend watching beside you would *feel* at a moment (drives the character's face).
-Emotion = Literal["surprised", "laughing", "impressed", "worried", "cringe", "love", "sad"]
+Emotion = Literal["curious", "surprised", "laughing", "impressed", "worried", "cringe", "love", "sad"]
+# What kind of moment a Short is building towards (predicted from the title, confirmed by frames).
+MomentType = Literal["attempt", "reveal", "pov", "surprise", "tutorial", "continuation", "reaction", "other"]
+Change = Literal["none", "minor", "major"]
 
 
 class Camel(BaseModel):
@@ -100,6 +103,7 @@ class MemoryItem(Camel):
     themes: list[str] = Field(default_factory=list)
     seconds_watched: float = 0
     skipped: bool = False
+    running_joke: str | None = None
 
 
 class ReactRequest(Camel):
@@ -157,3 +161,96 @@ class CaptionResponse(Camel):
 class LLMCaptionReaction(BaseModel):
     emotion: Emotion | None = Field(None, description="How a friend would react to what was just SAID, or null if it is ordinary.")
     reaction: LLMReaction | None = Field(None, description="One line ONLY if the words are genuinely funny or surprising. Usually null.")
+
+
+# ---------- swipe step: instant prediction from the title ----------
+
+
+class SwipeRequest(Camel):
+    video_id: str = Field(max_length=64)
+    title: str = Field(default="", max_length=300)
+    channel: str = Field(default="", max_length=120)
+    memory: list[MemoryItem] = Field(default_factory=list, max_length=3)
+    personality: Personality = "witty"
+    frequency: Frequency = "balanced"
+
+
+class LLMSwipe(BaseModel):
+    moment_type: MomentType = Field(description="What kind of moment this Short is likely building towards, from the title alone")
+    emotion: Emotion | None = Field(None, description="A NON-specific first reaction (curious, surprised...). null if the title says nothing")
+    look_for: str = Field("", description="Under 12 words: what to watch for in the frames, e.g. 'whether the cake survives'")
+
+
+class SwipeResponse(Camel):
+    moment_type: MomentType = "other"
+    emotion: Emotion | None = None
+    level: int = 0  # 0 = nothing, 1 = face only (the swipe step never speaks)
+    look_for: str = ""
+
+
+# ---------- observe step: one frame at a time, evolving belief ----------
+
+
+class Belief(Camel):
+    """What ScrollMate currently thinks is happening in one Short. Text only, RAM only."""
+
+    video_id: str
+    title: str = ""
+    moment_type: MomentType = "other"
+    topic: str = "unknown"
+    happening: str = ""
+    expected_next: str = ""
+    outcome: str | None = None
+    mood: Mood = "unclear"
+    themes: list[str] = Field(default_factory=list)
+    events: list[Event] = Field(default_factory=list)
+    emotion_arc: list[str] = Field(default_factory=list)
+    running_joke: str | None = None
+    confidence: float = 0.0  # model estimate, not calibrated
+    frames_seen: int = 0
+    version: int = 0
+
+
+class ObserveRequest(Camel):
+    video_id: str = Field(max_length=64)
+    frame: str = ""  # one base64 JPEG (empty = text only); used for one call, never stored
+    frame_time: float = 0
+    duration: float = 0
+    frame_index: int = Field(1, ge=1, le=6)
+    max_frames: int = Field(3, ge=1, le=6)
+    title: str = Field(default="", max_length=300)
+    channel: str = Field(default="", max_length=120)
+    captions: list[str] = Field(default_factory=list, max_length=20)
+    memory: list[MemoryItem] = Field(default_factory=list, max_length=3)
+    personality: Personality = "witty"
+    frequency: Frequency = "balanced"
+
+
+class LLMObserve(BaseModel):
+    seen_now: str = Field(description="5-15 words: what is visible in THIS frame. Never invented.")
+    topic: str = Field(description="1-3 words, lowercase")
+    happening: str = Field(description="One factual sentence: what is happening in the Short so far")
+    expected_next: str = Field("", description="What will probably happen next, or empty")
+    moment_type: MomentType
+    outcome: str | None = Field(None, description="How it ends, only if already visible")
+    mood: Mood
+    themes: list[str] = Field(default_factory=list, max_length=4, description="lowercase single words")
+    confidence: float = Field(ge=0, le=1, description="How sure you are about the whole picture")
+    change: Change = Field(description="How much THIS frame changed your understanding vs the belief so far")
+    emotion: Emotion | None = Field(None, description="How a friend reacts to THIS frame right now, or null")
+    level: int = Field(0, ge=0, le=3, description="0 nothing, 1 face only, 2 short comment, 3 strong moment")
+    line: str | None = Field(None, description="ONE sentence, max ~15 words, only if level >= 2 and genuinely worth saying")
+    line_is_callback: bool = Field(False, description="true if the line links to earlier remembered Shorts")
+    running_joke: str | None = Field(None, description="A short running joke across the remembered Shorts, if one genuinely exists")
+    next_look_at: float | None = Field(None, description="Video second when the next interesting moment is likely, or null if you have seen enough")
+
+
+class ObserveResponse(Camel):
+    belief: Belief
+    emotion: Emotion | None = None
+    level: int = 0
+    change: Change = "none"
+    reactions: list[ReactionCandidate] = Field(default_factory=list)
+    next_capture_at: float | None = None
+    final: bool = False
+    record: MemoryItem  # what goes into the 3-Short memory if this Short ends now

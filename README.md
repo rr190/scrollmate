@@ -28,6 +28,14 @@ cp .env.example .env             # add ANTHROPIC_API_KEY (or any LiteLLM provide
 
 Open **http://localhost:8000/ui** to test analyse/react without the extension: drop in frames, build the 3-Short memory, generate reactions, and see a request log.
 
+The **Models** panel at the top switches providers instantly: **Mixed** (default), **Groq**, **OpenAI**, **Gemini** or **Gemini Live**, or a custom model for each slot.
+
+**Gemini Live** (`backend/app/gemini_live.py`) is a vision lane for `/observe` only:
+- **Sessions:** one persistent Live session per Short, which remembers earlier frames. A spare session is kept open for the next Short. Each frame returns through an `observe` tool call.
+- **Speed:** about 1.0 s per frame (median), with a 2.5 s deadline per frame.
+- **Fallback:** on a stall or an error, that frame falls back to the regular vision model.
+- **Model strings:** `gemini-live/<model>`. **Speed test** times a 1-token request to every active model. A switch is held in memory: restarting the backend goes back to `backend/.env`, so put a choice you want to keep there. Presets whose API key is missing are locked.
+
 The same page has a **Live from the extension** feed. While you scroll Shorts with ScrollMate active, the extension reports each step to `POST /scrollmate/events`, and the page streams it from `GET /scrollmate/feed`. You see one card per Short: frames captured, what the AI saw, the reactions it proposed, each timing decision (WAIT, SPEAK_NOW, …) and what was shown. The feed is RAM only (the last 200 events). The frame strip appears only with `SCROLLMATE_DEV_FEED_IMAGES=1`.
 
 `GET http://localhost:8000/health` shows whether it is in **mock mode**. Mock mode turns on automatically when no key is set. It makes no LLM calls and gives text-only heuristic answers, so you can test the pipeline without a key.
@@ -100,6 +108,12 @@ Both policies get exactly the same simulated reactions: frames at 10%, 50% and 8
 - **Frames:** `captureVisibleTab` (ScrollMate hidden for two frames, cropped to the video rect, ≤512 px JPEG, at most 3 per Short with ≥600 ms between captures), then canvas, then text only.
 - **Memory:** a 3-item ring buffer in the background worker, mirrored to `chrome.storage.session`. That storage lives in RAM, never on disk, and survives MV3 worker restarts. Analyses are cached by video ID on both sides.
 - **Timing engine** (`shared/timing.ts`) rules, in order: disabled, duplicate, expired, below the importance threshold (Rare 0.75, Balanced 0.55, Chatty 0.4), stale (scrolled away, not a callback), per-Short cap, fast scrolling (≥3 Shorts in 6 s), cooldown (Rare 45 s, Balanced 20 s, Chatty 12 s), natural gap → `SPEAK_NOW`. Mid-playback is `WAIT`, or `SAVE_FOR_LATER` for callbacks. The one exception is a time-sensitive reaction with importance ≥ 0.9, which may show as a silent bubble if it isn't near a key moment. Voice is used only when it's known to be quiet (paused, muted, or the demo). Otherwise the bubble shows silently. The engine never touches playback or volume.
+- **Live loop (real Shorts):**
+  1. **On swipe:** title rules (`shared/moments.ts`, < 1 ms) give an instant non-specific face ("I tried…" → 🤔, "POV:" → 😂). `POST /scrollmate/swipe` then confirms it from the title (about 0.6 s).
+  2. **Frame 1 at about 0.4 s:** `POST /scrollmate/observe` sends one frame plus the backend's running **belief** for that Short. It returns the updated belief, a face for this moment, `change` (none, minor or major), a `level` from 0 to 3, maybe one line, and `next_capture_at`.
+  3. **Frames 2–3 at the predicted times:** kept at least 1.5 s after the previous frame and no later than 0.5 s before the end, with **at most 3 frames**. Each frame takes about 0.8–2 s (vision models raced).
+  4. **Levels:** a deterministic cap stops low confidence from earning more than a face. Lines go to the timing engine as usual, so bubbles still wait for a pause.
+  5. **Memory:** the final belief becomes the memory record once the Short ends, including any `running_joke`. Callbacks are used only when the pattern genuinely continues.
 - **Timed emotions** (`shared/emotions.ts`): the vision model tags each moment it sees with an emotion (surprised, laughing, impressed, worried, cringe, love, sad). The backend pins each one to the real frame time and turns them into `cues` (`build_cues()` in `backend/app/main.py`). Cues only come from frames, never from title text alone, and cues closer than 1.2 s are merged. The `CueTrack` fires a cue when playback *crosses* its time, 0.3 s early so the face lands on the moment. The face holds for about 1.4–2.2 s, depending on intensity, then eases back. A face change never interrupts, so unlike speech it may happen mid-playback. On real Shorts the analysis arrives near the end of the first play, so faces sync on the loop. In the demo the cues are hand-timed, so they sync on the first play. Bubbles and speech take priority over faces. Faces take priority over "thinking".
 - **Seamless faces** (`content/Character.tsx`): every eye, mouth, brow and extra is always drawn. Only the active ones are visible, and they crossfade (0.2 s) with a small scale-in, while the body does a squash-and-bounce on each change. Reduced motion keeps the crossfade and drops the movement.
 - **Models and concurrency:**

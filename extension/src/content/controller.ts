@@ -6,12 +6,14 @@
  */
 import {
   sendBg,
-  type AnalyseReactResponse,
   type CaptionReactResponse,
   type CaptureResponse,
+  type ObserveResponse,
   type ReactResponse,
+  type SwipeResponse,
   type TelemetryEvent,
 } from '../shared/messages';
+import { predictMoment } from '../shared/moments';
 import { CueTrack, type Emotion, type EmotionCue } from '../shared/emotions';
 import { TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
 import { DEFAULT_SETTINGS, type MemoryRecord, type ReactionProposal, type Rect, type Settings } from '../shared/types';
@@ -42,11 +44,13 @@ export interface UiState {
 interface ShortCtx {
   videoId: string;
   startedAt: number;
-  frames: string[];
-  frameTimes: number[];
-  attempts: number;
+  frameCount: number; // frames analysed so far (max MAX_FRAMES)
+  nextAt: number; // video second for the next frame
   capturing: boolean;
-  analysed: boolean;
+  observing: boolean; // an /observe call is in flight
+  done: boolean; // seen enough of this Short
+  title: string;
+  firstFaceAt: number | null; // ms after the swipe
   captions: Set<string>;
   lastCaptionRead: number;
   pendingCaptions: string[]; // new lines not yet sent to the caption step
@@ -58,6 +62,9 @@ const SETTINGS_KEY = 'scrollmate.settings';
 const posKey = (env: Env) => `scrollmate.position.${env}`;
 const SLEEP_AFTER_MS = 90_000;
 const CAPTION_EVERY_MS = 4_000;
+const MAX_FRAMES = 3;
+const FIRST_FRAME_AT_S = 0.4; // as soon as the video is really playing
+const MIN_FRAME_GAP_S = 1.5; // leave room for the call + Chrome's capture limit
 
 let idSeq = 0;
 const newId = () => `r${Date.now().toString(36)}${(idSeq++).toString(36)}`;
@@ -296,8 +303,8 @@ export class Controller {
     const snap = this.snapshot();
     if (this.state.settings.enabled) {
       const d = this.engine.tick(snap, now);
+      this.flushDecisions(); // log the decision first, then the delivery it caused
       if (d) this.deliver(d);
-      this.flushDecisions();
       const cue = this.cues.update(snap.videoId, snap.currentTime, snap.playing, now);
       if (cue) {
         console.log(LOG, 'emotion', cue.emotion, `at ${snap.currentTime.toFixed(1)}s (cue ${cue.t}s)`);
@@ -360,14 +367,33 @@ export class Controller {
       const c: Candidate = { ...p, id: newId(), createdAt: now, avoidTimes };
       console.log(LOG, 'proposal', c.importance, c.isCallback ? '(callback)' : '', `"${c.text}"`);
       const d = this.engine.propose(c, this.snapshot(), now);
+      this.flushDecisions();
       if (d) this.deliver(d);
     }
     this.tick();
   }
 
-  // ---------- YouTube pipeline ----------
+  // ---------- YouTube pipeline: live loop ----------
+  //  swipe  -> rules face (<1 ms) -> AI title step (~0.6 s) confirms
+  //  frame 1 at ~0.5 s -> observe (~1-2 s) -> face now + maybe a line + "next frame at Xs"
+  //  frames 2..3 at the predicted times (clamped), then the final belief becomes memory.
   private newCtx(videoId: string): ShortCtx {
-    return { videoId, startedAt: Date.now(), frames: [], frameTimes: [], attempts: 0, capturing: false, analysed: false, captions: new Set(), lastCaptionRead: 0, pendingCaptions: [], lastCaptionSent: 0, captionInflight: false };
+    return {
+      videoId,
+      startedAt: Date.now(),
+      frameCount: 0,
+      nextAt: FIRST_FRAME_AT_S,
+      capturing: false,
+      observing: false,
+      done: false,
+      title: '',
+      captions: new Set(),
+      lastCaptionRead: 0,
+      pendingCaptions: [],
+      lastCaptionSent: 0,
+      captionInflight: false,
+      firstFaceAt: null,
+    };
   }
 
   private onShortChange(info: ShortInfo, prev: LeftInfo | null) {
@@ -375,14 +401,64 @@ export class Controller {
     if (this.demo) return;
     this.navTimes.push(info.startedAt);
     if (prev) this.handleLeft(prev);
-    this.ctx = this.newCtx(info.videoId);
+    const prevTitle = this.ctx?.title ?? '';
+    const ctx = (this.ctx = this.newCtx(info.videoId));
     if (!this.state.settings.enabled) return;
     sendBg({ type: 'SHORT_STARTED', videoId: info.videoId }).catch(() => undefined);
-    // Title is read a moment later so YouTube has updated the active reel's DOM.
-    window.setTimeout(() => {
+    // YouTube updates the active reel's title a moment after the URL changes; skip a stale title.
+    const readTitle = (attempt: number) => {
+      if (this.ctx !== ctx) return;
       const { title, channel } = readPageText();
+      if ((!title || title === prevTitle) && attempt < 4) {
+        window.setTimeout(() => readTitle(attempt + 1), 250);
+        return;
+      }
+      ctx.title = title;
       this.emit({ type: 'short_started', videoId: info.videoId, title, channel });
-    }, 800);
+      void this.swipeStep(ctx, title, channel);
+    };
+    window.setTimeout(() => readTitle(0), 150);
+    this.tick();
+  }
+
+  /** Instant face from title rules, then the AI title step refines it. Faces only: nothing is said yet. */
+  private async swipeStep(ctx: ShortCtx, title: string, channel: string) {
+    const now = Date.now();
+    const rule = predictMoment(title);
+    if (rule.emotion && this.isCurrent(ctx)) {
+      this.showFace(ctx, rule.emotion, 0.5, 'title rules');
+      this.emit({ type: 'status', videoId: ctx.videoId, note: `rules: ${rule.moment} → ${rule.emotion} in ${Date.now() - now} ms` });
+    }
+    if (!title) return;
+    try {
+      const res = await sendBg<SwipeResponse>({
+        type: 'SWIPE',
+        videoId: ctx.videoId,
+        title,
+        channel,
+        personality: this.state.settings.personality,
+        frequency: this.state.settings.frequency,
+      });
+      // Frames are more trustworthy than the title: never overwrite a face from frame analysis.
+      if (!this.isCurrent(ctx) || ctx.frameCount > 0 || !res?.emotion) return;
+      if (res.emotion !== rule.emotion) this.showFace(ctx, res.emotion, 0.6, 'title AI');
+    } catch {
+      /* optional */
+    }
+  }
+
+  private isCurrent(ctx: ShortCtx): boolean {
+    return this.ctx === ctx && this.watcher?.currentId === ctx.videoId && this.state.settings.enabled && !this.demo;
+  }
+
+  private showFace(ctx: ShortCtx, emotion: Emotion, intensity: number, via: string, momentT?: number) {
+    const v = this.watcher?.video;
+    const at = v ? Math.round(v.currentTime * 10) / 10 : 0;
+    this.cues.fireNow(ctx.videoId, emotion, intensity, at, Date.now());
+    if (momentT !== undefined) this.cues.add(ctx.videoId, { t: momentT, emotion, intensity }); // replay on the loop
+    if (ctx.firstFaceAt === null) ctx.firstFaceAt = Date.now() - ctx.startedAt;
+    console.log(LOG, 'face', emotion, `via ${via}`, `(${ctx.firstFaceAt} ms after swipe for the first face)`);
+    this.emit({ type: 'emotion', videoId: ctx.videoId, emotion, t: momentT ?? at, at, via, sinceSwipeMs: Date.now() - ctx.startedAt });
     this.tick();
   }
 
@@ -402,11 +478,10 @@ export class Controller {
       skipped: prev.skipped,
       looped: prev.looped,
     });
-    if (!this.state.settings.enabled || !ctx || ctx.videoId !== prev.videoId || ctx.analysed) return;
-    // Enough seen to remember it properly? Analyse with the frames we have (results may only serve callbacks).
-    if (prev.secondsWatched >= 4 && ctx.frames.length > 0) this.analyse(ctx, prev.secondsWatched);
-    else
-      sendBg({ type: 'SHORT_SKIPPED', videoId: prev.videoId, title: readPageText().title, secondsWatched: prev.secondsWatched }).catch(
+    if (!this.state.settings.enabled || !ctx || ctx.videoId !== prev.videoId) return;
+    // Nothing analysed: remember it as skipped. Otherwise the background commits the belief on the next SHORT_STARTED.
+    if (ctx.frameCount === 0)
+      sendBg({ type: 'SHORT_SKIPPED', videoId: prev.videoId, title: ctx.title || readPageText().title, secondsWatched: prev.secondsWatched }).catch(
         () => undefined,
       );
   }
@@ -426,14 +501,13 @@ export class Controller {
         ctx.captions.add(c);
         ctx.pendingCaptions.push(c);
       }
-      this.maybeSendCaptions(ctx, video);
+      // Captions run on their own while no frame step is in flight (a frame step carries them instead).
+      if (!ctx.observing) this.maybeSendCaptions(ctx, video);
     }
-    const d = isFinite(video.duration) ? video.duration : 0;
-    if (d > 0 && !ctx.analysed && !ctx.capturing && ctx.attempts < 3) {
-      const targets = [Math.min(1.5, d * 0.1), d * 0.5, d * 0.85];
-      if (video.currentTime >= targets[ctx.attempts]) void this.captureFrame(ctx, video);
+    // Next frame when playback reaches the planned time (first frame as soon as the video is really playing).
+    if (!ctx.done && !ctx.capturing && !ctx.observing && ctx.frameCount < MAX_FRAMES && !video.paused && video.currentTime >= ctx.nextAt) {
+      void this.frameStep(ctx, video);
     }
-    if (ev === 'loop' && !ctx.analysed && ctx.attempts > 0 && !ctx.capturing) this.analyse(ctx, this.watcher?.secondsWatched ?? 0);
     if (ev !== 'time') this.tick();
   }
 
@@ -447,8 +521,6 @@ export class Controller {
     const lines = ctx.pendingCaptions.splice(0);
     ctx.captionInflight = true;
     ctx.lastCaptionSent = now;
-    const epoch = this.epoch;
-    const { title, channel } = readPageText();
     const at = Math.round(video.currentTime * 10) / 10;
     this.emit({ type: 'status', videoId: ctx.videoId, note: `captions sent: ${lines.join(' | ').slice(0, 200)}`, t: at });
     try {
@@ -456,18 +528,14 @@ export class Controller {
         type: 'CAPTION_REACT',
         videoId: ctx.videoId,
         lines,
-        title,
-        channel,
+        title: ctx.title,
+        channel: readPageText().channel,
         currentTime: at,
         personality: this.state.settings.personality,
         frequency: this.state.settings.frequency,
       });
-      if (epoch !== this.epoch || this.ctx !== ctx || this.watcher?.currentId !== ctx.videoId) return; // scrolled away
-      if (res?.emotion) {
-        const cue = this.cues.fireNow(ctx.videoId, res.emotion, 0.8, video.currentTime, Date.now());
-        console.log(LOG, 'emotion (captions)', cue.emotion);
-        this.emit({ type: 'emotion', videoId: ctx.videoId, emotion: cue.emotion, t: at, at: Math.round(video.currentTime * 10) / 10, via: 'captions' });
-      }
+      if (!this.isCurrent(ctx)) return; // scrolled away
+      if (res?.emotion) this.showFace(ctx, res.emotion, 0.8, 'captions', at);
       this.propose(res?.reactions ?? []);
     } catch {
       /* backend down: captions are optional */
@@ -476,93 +544,91 @@ export class Controller {
     }
   }
 
-  private async captureFrame(ctx: ShortCtx, video: HTMLVideoElement) {
+  /** One step of the live loop: grab a frame, ask /observe, react, and plan the next frame. */
+  private async frameStep(ctx: ShortCtx, video: HTMLVideoElement) {
     ctx.capturing = true;
-    const epoch = this.epoch;
-    const t = video.currentTime;
-    let frame: string | null = null;
-    let source: UiState['frameSource'] = 'text';
+    const t = Math.round(video.currentTime * 10) / 10;
+    const duration = isFinite(video.duration) ? video.duration : 0;
+    const { frame, source } = await this.grabFrame(video);
+    ctx.capturing = false;
+    if (!this.isCurrent(ctx)) return;
+    ctx.frameCount++;
+    const index = ctx.frameCount;
+    if (this.state.frameSource !== source) this.set({ frameSource: source });
+    console.log(LOG, `frame ${index}/${MAX_FRAMES} via ${source} at ${t.toFixed(1)}s`);
+    this.emit({ type: 'frame', videoId: ctx.videoId, n: index, of: MAX_FRAMES, via: frame ? source : 'failed', t });
 
-    // 1) Primary: screenshot the tab, with ScrollMate hidden and cropped to the video.
+    const captions = ctx.pendingCaptions.splice(0); // the frame step carries any new captions
+    ctx.observing = true;
+    this.busy++;
+    this.tick();
+    try {
+      const res = await sendBg<ObserveResponse>({
+        type: 'OBSERVE',
+        videoId: ctx.videoId,
+        frame: frame ?? '',
+        frameTime: t,
+        duration,
+        frameIndex: index,
+        maxFrames: MAX_FRAMES,
+        title: ctx.title,
+        channel: readPageText().channel,
+        captions,
+        personality: this.state.settings.personality,
+        frequency: this.state.settings.frequency,
+      });
+      if (!this.isCurrent(ctx)) return;
+      if (res?.error) this.set({ note: `Backend unreachable or failed (${res.error.slice(0, 60)}). Staying quiet.` });
+      if (res?.emotion && res.level >= 1) this.showFace(ctx, res.emotion, res.level >= 3 ? 1 : 0.8, `frame ${index}`, t);
+      this.propose(res?.reactions ?? [], [t]);
+      // Plan the next frame: trust the model's guess only within sane bounds.
+      const now = video.currentTime;
+      let next = res?.nextCaptureAt ?? null;
+      if (next !== null) next = Math.max(next, t + MIN_FRAME_GAP_S, now + 0.3);
+      if (res?.final || next === null || index >= MAX_FRAMES || (duration > 0 && next > duration - 0.5)) ctx.done = true;
+      else ctx.nextAt = next;
+      this.emit({
+        type: 'status',
+        videoId: ctx.videoId,
+        note: ctx.done ? `done after ${index} frame(s)` : `next frame at ${next?.toFixed(1)}s (asked ${res?.nextCaptureAt ?? 'null'})`,
+      });
+    } catch (e) {
+      console.warn(LOG, 'observe failed', e);
+      if (index >= MAX_FRAMES) ctx.done = true;
+      else ctx.nextAt = t + 3; // try again a bit later
+    } finally {
+      ctx.observing = false;
+      this.busy = Math.max(0, this.busy - 1);
+      this.tick();
+    }
+  }
+
+  /** Screenshot (character hidden, cropped) -> video canvas -> nothing (text only). */
+  private async grabFrame(video: HTMLVideoElement): Promise<{ frame: string | null; source: UiState['frameSource'] }> {
     const r = video.getBoundingClientRect();
     const rect: Rect = { x: Math.max(0, r.left), y: Math.max(0, r.top), width: Math.min(r.width, window.innerWidth), height: Math.min(r.height, window.innerHeight) };
     this.host.style.visibility = 'hidden';
     await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
     try {
       const resp = await sendBg<CaptureResponse>({ type: 'CAPTURE_FRAME', rect, viewport: { w: window.innerWidth, h: window.innerHeight } });
-      if (resp?.ok) {
-        frame = resp.data;
-        source = 'screen';
-      }
+      if (resp?.ok) return { frame: resp.data, source: 'screen' };
     } catch {
       /* fall through */
     } finally {
       this.host.style.visibility = '';
     }
-
-    // 2) Fallback: draw the <video> to a canvas (may throw SecurityError if tainted).
-    if (!frame) {
-      try {
-        const scale = Math.min(1, 512 / Math.max(video.videoWidth || 1, video.videoHeight || 1));
-        const c = document.createElement('canvas');
-        c.width = Math.max(1, Math.round(video.videoWidth * scale));
-        c.height = Math.max(1, Math.round(video.videoHeight * scale));
-        c.getContext('2d')!.drawImage(video, 0, 0, c.width, c.height);
-        frame = c.toDataURL('image/jpeg', 0.72).split(',')[1] ?? null;
-        if (frame) source = 'canvas';
-      } catch (e) {
-        console.warn(LOG, 'canvas fallback failed:', (e as Error).name);
-      }
-    }
-    // 3) Last resort: text only (title, channel, visible captions).
-
-    if (epoch !== this.epoch || this.ctx !== ctx) return;
-    ctx.attempts++;
-    ctx.capturing = false;
-    if (frame) {
-      ctx.frames.push(frame);
-      ctx.frameTimes.push(Math.round(t * 10) / 10);
-    }
-    if (this.state.frameSource !== source) this.set({ frameSource: source });
-    console.log(LOG, `frame ${ctx.attempts}/3 via ${source} at ${t.toFixed(1)}s`);
-    this.emit({ type: 'frame', videoId: ctx.videoId, n: ctx.attempts, of: 3, via: frame ? source : 'failed', t: Math.round(t * 10) / 10 });
-    if (ctx.attempts >= 3) this.analyse(ctx, this.watcher?.secondsWatched ?? 0);
-  }
-
-  private async analyse(ctx: ShortCtx, secondsWatched: number) {
-    if (ctx.analysed) return;
-    ctx.analysed = true;
-    const epoch = this.epoch;
-    const { title, channel, captions } = readPageText();
-    captions.forEach((c) => ctx.captions.add(c));
-    this.busy++;
-    this.tick();
     try {
-      const res = await sendBg<AnalyseReactResponse>({
-        type: 'ANALYSE_AND_REACT',
-        videoId: ctx.videoId,
-        frames: ctx.frames,
-        frameTimes: ctx.frameTimes,
-        title,
-        channel,
-        captions: [...ctx.captions],
-        secondsWatched,
-        personality: this.state.settings.personality,
-        frequency: this.state.settings.frequency,
-      });
-      ctx.frames = []; // never keep frames around
-      if (epoch !== this.epoch) return;
-      if (res?.error) this.set({ note: `Backend unreachable or failed (${res.error.slice(0, 60)}). Staying quiet.` });
-      if (res?.analysis) console.log(LOG, 'analysis', res.analysis);
-      if (res?.analysis?.cues?.length && this.watcher?.currentId === ctx.videoId) this.loadCues(ctx.videoId, res.analysis.cues);
-      const avoid = (res?.analysis?.events ?? []).map((e) => e.timestamp).filter((t): t is number => typeof t === 'number');
-      this.propose(res?.reactions ?? [], avoid);
+      const scale = Math.min(1, 512 / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(video.videoWidth * scale));
+      c.height = Math.max(1, Math.round(video.videoHeight * scale));
+      c.getContext('2d')!.drawImage(video, 0, 0, c.width, c.height);
+      const frame = c.toDataURL('image/jpeg', 0.72).split(',')[1] ?? null;
+      if (frame) return { frame, source: 'canvas' };
     } catch (e) {
-      console.warn(LOG, 'analyse failed', e);
-    } finally {
-      if (epoch === this.epoch) this.busy = Math.max(0, this.busy - 1);
-      this.tick();
+      console.warn(LOG, 'canvas fallback failed:', (e as Error).name);
     }
+    return { frame: null, source: 'text' };
   }
 
   // ---------- demo ----------
