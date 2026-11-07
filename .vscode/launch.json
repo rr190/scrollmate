@@ -1,0 +1,60 @@
+{
+  // F5 targets for ScrollMate. "ScrollMate: Backend + Chrome" starts everything.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Backend (FastAPI, debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--host", "127.0.0.1", "--port", "8000"],
+      "cwd": "${workspaceFolder}/backend",
+      "python": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "justMyCode": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Backend (mock mode, no LLM calls)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--host", "127.0.0.1", "--port", "8000"],
+      "cwd": "${workspaceFolder}/backend",
+      "python": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "env": { "SCROLLMATE_MOCK": "1" },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Chrome + extension (YouTube Shorts)",
+      "type": "chrome",
+      "request": "launch",
+      "preLaunchTask": "build extension",
+      "url": "https://www.youtube.com/shorts",
+      // Separate profile so your normal Chrome is untouched. Sign-ins there don't carry over.
+      "userDataDir": "${workspaceFolder}/.vscode/chrome-profile",
+      "runtimeArgs": [
+        "--load-extension=${workspaceFolder}/extension/dist",
+        // Chrome 137+ ignores --load-extension unless this feature is disabled.
+        "--disable-features=DisableLoadExtensionCommandLineSwitch"
+      ],
+      "webRoot": "${workspaceFolder}/extension"
+    },
+    {
+      "name": "Timing eval",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/extension",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "../eval/timing_eval.ts"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "ScrollMate: Backend + Chrome",
+      "configurations": ["Backend (FastAPI, debug)", "Chrome + extension (YouTube Shorts)"],
+      "stopAll": true
+    }
+  ]
+}

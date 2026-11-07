@@ -1,0 +1,485 @@
+/* Everything lives inside ScrollMate's Shadow DOM: YouTube can't touch it, it can't touch YouTube. */
+:host {
+  all: initial;
+  --sm-cream: #fff6e8;
+  --sm-ink: #2f2540;
+  --sm-muted: #6e6383;
+  --sm-purple: #8a6ae6;
+  --sm-purple-soft: #efe8ff;
+  --sm-line: #e8ddf7;
+  --sm-paper: #fffdf9;
+  --sm-shadow: 0 10px 30px rgba(47, 37, 64, 0.22), 0 2px 6px rgba(47, 37, 64, 0.12);
+  font-family: 'Nunito', ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.sm-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none; /* never block scrolling or YouTube's controls */
+  z-index: 2147483000;
+}
+
+.sm-companion {
+  position: absolute;
+  pointer-events: none;
+}
+
+.sm-char-btn {
+  pointer-events: auto;
+  position: relative;
+  display: block;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.sm-char-btn:focus-visible {
+  outline: 3px solid var(--sm-purple);
+  outline-offset: 4px;
+  border-radius: 24px;
+}
+.sm-char-btn.sm-dragging {
+  cursor: grabbing;
+}
+
+.sm-float {
+  display: block;
+  width: 100%;
+  height: 100%;
+  animation: sm-float 3.4s ease-in-out infinite;
+}
+.sm-char {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 6px 12px rgba(47, 37, 64, 0.25));
+}
+.sm-mood-sleeping {
+  filter: drop-shadow(0 6px 12px rgba(47, 37, 64, 0.2)) saturate(0.75);
+}
+
+.sm-line {
+  fill: none;
+  stroke: #3a2d4d;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.sm-thin {
+  stroke-width: 2.2;
+}
+
+.sm-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sm-blink 5.5s infinite;
+}
+.sm-mood-sleeping .sm-eyes,
+.sm-mood-amused .sm-eyes {
+  animation: none;
+}
+.sm-look-up {
+  transform: translate(1.5px, -2px);
+}
+
+.sm-sparkles path {
+  stroke: #ffc23d;
+  stroke-width: 5;
+  stroke-linecap: round;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.sm-mood-amused .sm-sparkles path,
+.sm-mood-speaking .sm-sparkles path {
+  opacity: 1;
+  animation: sm-spark 0.9s ease-in-out infinite alternate;
+}
+
+.sm-talk {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sm-talk 0.22s ease-in-out infinite alternate;
+}
+
+.sm-thought circle {
+  fill: #fff;
+  stroke: #cbb8f5;
+  stroke-width: 1.5;
+  animation: sm-pulse 1.2s ease-in-out infinite;
+}
+.sm-thought circle:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.sm-thought circle:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.sm-zzz text {
+  font: 700 13px/1 ui-rounded, system-ui, sans-serif;
+  fill: #8a6ae6;
+  animation: sm-zzz 2.6s ease-in-out infinite;
+}
+.sm-zzz text:nth-child(2) {
+  font-size: 17px;
+  animation-delay: 0.7s;
+}
+
+.sm-mood-amused {
+  transform-origin: 50% 85%;
+  animation: sm-giggle 0.5s ease-in-out 2;
+}
+
+.sm-dot {
+  position: absolute;
+  right: 8%;
+  bottom: 6%;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.sm-on {
+  background: #39c27a;
+}
+.sm-off {
+  background: #b9b2c4;
+}
+
+.sm-demo-badge {
+  position: absolute;
+  left: 50%;
+  top: -10px;
+  transform: translateX(-50%);
+  font: 800 10px/1 system-ui, sans-serif;
+  letter-spacing: 0.12em;
+  color: #fff;
+  background: #ff4f7b;
+  padding: 4px 7px;
+  border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(255, 79, 123, 0.4);
+}
+
+/* speech bubble */
+.sm-bubble {
+  pointer-events: auto;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  width: max-content;
+  max-width: min(260px, 70vw);
+  padding: 10px 14px;
+  background: var(--sm-paper);
+  color: var(--sm-ink);
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  border-radius: 18px;
+  box-shadow: var(--sm-shadow);
+  border: 2px solid var(--sm-line);
+  animation: sm-pop 0.32s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  cursor: pointer;
+}
+.sm-right .sm-bubble {
+  right: 30%;
+  border-bottom-right-radius: 6px;
+}
+.sm-left .sm-bubble {
+  left: 30%;
+  border-bottom-left-radius: 6px;
+}
+
+/* popover */
+.sm-popover {
+  pointer-events: auto;
+  position: absolute;
+  top: 0;
+  width: 280px;
+  max-height: min(78vh, 620px);
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--sm-paper);
+  color: var(--sm-ink);
+  border-radius: 18px;
+  border: 1px solid var(--sm-line);
+  box-shadow: var(--sm-shadow);
+  font-size: 13px;
+  animation: sm-pop 0.2s ease-out both;
+}
+.sm-right .sm-popover {
+  right: calc(100% + 10px);
+}
+.sm-left .sm-popover {
+  left: calc(100% + 10px);
+}
+.sm-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 15px;
+}
+.sm-pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eee9f3;
+  color: var(--sm-muted);
+}
+.sm-pill-on {
+  background: #dcf6e8;
+  color: #1c8a53;
+}
+.sm-x {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--sm-muted);
+  cursor: pointer;
+}
+.sm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  cursor: pointer;
+}
+.sm-label {
+  display: block;
+  font-weight: 700;
+}
+.sm-hint {
+  display: block;
+  color: var(--sm-muted);
+  font-size: 11.5px;
+  margin-top: 1px;
+}
+.sm-switch {
+  flex: none;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  border: 0;
+  background: #d9d3e2;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.sm-switch span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s;
+}
+.sm-switch-on {
+  background: var(--sm-purple);
+}
+.sm-switch-on span {
+  transform: translateX(16px);
+}
+.sm-field {
+  padding: 7px 0;
+}
+.sm-seg {
+  display: flex;
+  margin-top: 6px;
+  background: #f3eff8;
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+}
+.sm-seg button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 6px 4px;
+  border-radius: 8px;
+  font-weight: 600; font-size: 12px; line-height: 1.1;
+  font-family: inherit;
+  color: var(--sm-muted);
+  cursor: pointer;
+}
+.sm-seg button.sm-seg-on {
+  background: #fff;
+  color: var(--sm-ink);
+  box-shadow: 0 1px 3px rgba(47, 37, 64, 0.15);
+}
+.sm-memory {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--sm-muted);
+  font-size: 12px;
+}
+.sm-memory li {
+  margin: 3px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sm-chip {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--sm-purple);
+  background: var(--sm-purple-soft);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+.sm-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 0;
+}
+.sm-btn {
+  flex: 1;
+  border: 1px solid var(--sm-line);
+  background: #fff;
+  color: var(--sm-ink);
+  border-radius: 10px;
+  padding: 7px 6px;
+  font-weight: 600; font-size: 12px; line-height: 1.1;
+  font-family: inherit;
+  cursor: pointer;
+}
+.sm-btn:hover,
+.sm-seg button:hover {
+  background: #f7f3ff;
+}
+.sm-section {
+  border-top: 1px solid var(--sm-line);
+  margin-top: 6px;
+  padding-top: 4px;
+}
+.sm-link {
+  border: 0;
+  background: transparent;
+  padding: 6px 0;
+  color: var(--sm-purple);
+  font-weight: 700; font-size: 12px; line-height: 1.2;
+  font-family: inherit;
+  cursor: pointer;
+}
+.sm-note {
+  margin: 6px 0;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: #fff7e0;
+  color: #6b5312;
+  font-size: 11.5px;
+}
+.sm-privacy {
+  color: var(--sm-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.sm-privacy p {
+  margin: 4px 0;
+}
+.sm-popover button:focus-visible {
+  outline: 2px solid var(--sm-purple);
+  outline-offset: 2px;
+}
+
+/* demo strip (on YouTube) */
+.sm-demo-strip {
+  pointer-events: auto;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 210px;
+  padding: 8px 10px;
+  background: rgba(30, 22, 44, 0.82);
+  color: #fff;
+  border-radius: 12px;
+  font-size: 11.5px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+.sm-demo-strip-title {
+  grid-column: 1 / -1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700;
+}
+.sm-progress {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.sm-progress div {
+  height: 100%;
+  background: #fff;
+}
+.sm-mini-btn {
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: #fff;
+  color: var(--sm-ink);
+  font-weight: 700; font-size: 11px; line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+@keyframes sm-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes sm-blink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.1); }
+}
+@keyframes sm-talk {
+  from { transform: scaleY(0.35); }
+  to { transform: scaleY(1.15); }
+}
+@keyframes sm-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+@keyframes sm-zzz {
+  0% { opacity: 0; transform: translate(0, 4px); }
+  40% { opacity: 1; }
+  100% { opacity: 0; transform: translate(6px, -8px); }
+}
+@keyframes sm-spark {
+  from { transform: translate(0, 0); }
+  to { transform: translate(-1.5px, -1.5px); }
+}
+@keyframes sm-giggle {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-4deg); }
+  75% { transform: rotate(4deg); }
+}
+@keyframes sm-pop {
+  from { opacity: 0; transform: scale(0.85) translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sm-float,
+  .sm-eyes,
+  .sm-talk,
+  .sm-thought circle,
+  .sm-zzz text,
+  .sm-mood-amused,
+  .sm-sparkles path,
+  .sm-bubble,
+  .sm-popover {
+    animation: none !important;
+  }
+}
