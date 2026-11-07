@@ -7,7 +7,7 @@
  * Memory lives in a JS array mirrored to chrome.storage.session, which is held
  * in RAM only (never written to disk) and survives MV3 worker restarts.
  */
-import type { AnalyseReactResponse, BgRequest, CaptureResponse, ReactResponse } from '../shared/messages';
+import type { AnalyseReactResponse, BgRequest, CaptureResponse, ReactResponse, TelemetryEvent } from '../shared/messages';
 import type { Analysis, MemoryRecord, ReactionProposal, Rect } from '../shared/types';
 
 const BACKEND = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? 'http://localhost:8000';
@@ -77,6 +77,28 @@ async function postJson<T>(path: string, body: unknown, timeoutMs: number, key?:
     clearTimeout(timer);
     if (key && inflight.get(key) === ctrl) inflight.delete(key);
   }
+}
+
+// ---------- live feed telemetry (batched, fire-and-forget) ----------
+let telemetry: TelemetryEvent[] = [];
+let telemetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queueTelemetry(ev: TelemetryEvent) {
+  telemetry.push({ ...ev, at: Date.now() });
+  if (telemetry.length > 100) telemetry = telemetry.slice(-100);
+  if (!telemetryTimer) telemetryTimer = setTimeout(flushTelemetry, 300);
+}
+
+function flushTelemetry() {
+  telemetryTimer = null;
+  const batch = telemetry;
+  telemetry = [];
+  if (!batch.length) return;
+  fetch(`${BACKEND}/scrollmate/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(batch),
+  }).catch(() => undefined); // backend down: the feed is optional
 }
 
 function abortAll() {
@@ -259,6 +281,9 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
       return { ok: true };
     case 'CANCEL_ALL':
       abortAll();
+      return { ok: true };
+    case 'TELEMETRY':
+      queueTelemetry(msg.event);
       return { ok: true };
     case 'OPEN_STAGE':
       await chrome.tabs.create({ url: chrome.runtime.getURL('stage.html') });

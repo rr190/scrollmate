@@ -4,7 +4,7 @@
  *   reaction proposals          ->  TimingEngine (decides)  ->  bubble / voice
  * The UI subscribes to `state` and stays dumb.
  */
-import { sendBg, type AnalyseReactResponse, type CaptureResponse, type ReactResponse } from '../shared/messages';
+import { sendBg, type AnalyseReactResponse, type CaptureResponse, type ReactResponse, type TelemetryEvent } from '../shared/messages';
 import { TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
 import { DEFAULT_SETTINGS, type MemoryRecord, type ReactionProposal, type Rect, type Settings } from '../shared/types';
 import { DEMO_SHORTS, DemoDriver, type DemoShort, type DemoView } from './demo';
@@ -75,6 +75,7 @@ export class Controller {
   private lastActivity = Date.now();
   private demoTimers: number[] = [];
   private epoch = 0; // bumps on disable/clear so late async results are ignored
+  private logSent = 0; // decision-log entries already sent to the live feed
 
   constructor(public env: Env, private host: HTMLElement) {}
 
@@ -201,6 +202,33 @@ export class Controller {
     sendBg({ type: 'OPEN_STAGE' }).catch(() => undefined);
   }
 
+  // ---------- live feed telemetry (backend /ui) ----------
+  private emit(ev: TelemetryEvent) {
+    if (!this.state.settings.enabled) return;
+    sendBg({ type: 'TELEMETRY', event: { demo: !!this.demo, ...ev } }).catch(() => undefined);
+  }
+
+  /** Forward new timing-engine decisions to the feed. */
+  private flushDecisions() {
+    const log = this.engine.log;
+    if (this.logSent > log.length) this.logSent = 0; // log was cleared or trimmed
+    for (; this.logSent < log.length; this.logSent++) {
+      const d = log[this.logSent];
+      this.emit({
+        type: 'decision',
+        videoId: d.inputs.videoOnScreen,
+        target: d.targetVideoId,
+        decision: d.decision,
+        reason: d.reason,
+        text: d.text,
+        importance: d.inputs.importance,
+        isCallback: d.isCallback,
+        currentTime: d.inputs.currentTime,
+        gap: d.inputs.naturalGap,
+      });
+    }
+  }
+
   // ---------- snapshot + tick ----------
   snapshot(): PlaybackSnapshot {
     const now = Date.now();
@@ -249,6 +277,7 @@ export class Controller {
     if (this.state.settings.enabled) {
       const d = this.engine.tick(snap, now);
       if (d) this.deliver(d);
+      this.flushDecisions();
     }
     if (snap.playing) this.lastActivity = now;
     this.set({ mood: this.computeMood(snap, now), onShorts: this.env === 'stage' || !!snap.videoId });
@@ -267,6 +296,7 @@ export class Controller {
   // ---------- delivery ----------
   private deliver(d: Delivery) {
     console.log(LOG, 'DELIVER', d.mode, `"${d.candidate.text}"`, '-', d.reason);
+    this.emit({ type: 'delivered', videoId: d.candidate.targetVideoId, text: d.candidate.text, mode: d.mode, reason: d.reason });
     window.clearTimeout(this.bubbleTimer);
     this.set({ bubble: { id: d.candidate.id, text: d.candidate.text } });
     const linger = Math.min(8000, Math.max(4000, d.candidate.text.length * 75));
@@ -321,6 +351,11 @@ export class Controller {
     this.ctx = this.newCtx(info.videoId);
     if (!this.state.settings.enabled) return;
     sendBg({ type: 'SHORT_STARTED', videoId: info.videoId }).catch(() => undefined);
+    // Title is read a moment later so YouTube has updated the active reel's DOM.
+    window.setTimeout(() => {
+      const { title, channel } = readPageText();
+      this.emit({ type: 'short_started', videoId: info.videoId, title, channel });
+    }, 800);
     this.tick();
   }
 
@@ -333,6 +368,13 @@ export class Controller {
 
   private handleLeft(prev: LeftInfo) {
     const ctx = this.ctx;
+    this.emit({
+      type: 'short_left',
+      videoId: prev.videoId,
+      secondsWatched: Math.round(prev.secondsWatched * 10) / 10,
+      skipped: prev.skipped,
+      looped: prev.looped,
+    });
     if (!this.state.settings.enabled || !ctx || ctx.videoId !== prev.videoId || ctx.analysed) return;
     // Enough seen to remember it properly? Analyse with the frames we have (results may only serve callbacks).
     if (prev.secondsWatched >= 4 && ctx.frames.length > 0) this.analyse(ctx, prev.secondsWatched);
@@ -412,6 +454,7 @@ export class Controller {
     }
     if (this.state.frameSource !== source) this.set({ frameSource: source });
     console.log(LOG, `frame ${ctx.attempts}/3 via ${source} at ${t.toFixed(1)}s`);
+    this.emit({ type: 'frame', videoId: ctx.videoId, n: ctx.attempts, of: 3, via: frame ? source : 'failed', t: Math.round(t * 10) / 10 });
     if (ctx.attempts >= 3) this.analyse(ctx, this.watcher?.secondsWatched ?? 0);
   }
 
@@ -493,6 +536,7 @@ export class Controller {
 
   private onDemoShort(s: DemoShort, index: number) {
     this.navTimes.push(Date.now());
+    this.emit({ type: 'short_started', videoId: s.videoId, title: s.title, channel: s.channel });
     this.lastActivity = Date.now();
     if (index === 0) {
       this.engine.clear();

@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ScrollMate Backend Playground</title>
+<style>
+  :root {
+    --bg: #f7f5fb; --panel: #ffffff; --ink: #251d33; --muted: #6c6380; --line: #e6e0f0;
+    --accent: #7c5ce0; --accent-soft: #efe9ff; --good: #1f9d5c; --bad: #d23b4b; --warn: #b7791f;
+    --code: #f3f0f8; color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15121c; --panel: #1f1a29; --ink: #efeaf7; --muted: #a69cb8; --line: #332b42;
+      --accent: #a58bff; --accent-soft: #2c2440; --good: #4cd18b; --bad: #ff6b7a; --warn: #f0b35a;
+      --code: #191522; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+    padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.ok { background: var(--good); } .dot.err { background: var(--bad); }
+  .status { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  .status b { color: var(--ink); font-weight: 600; }
+  main { display: grid; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
+  section h2 { margin: 0 0 12px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  section h2 .n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent); font-size: 12px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 10px 0 4px; }
+  input[type=text], input[type=number], textarea, select {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit; }
+  textarea { resize: vertical; min-height: 54px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px;
+    padding: 7px 12px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .55; cursor: progress; }
+  button.small { padding: 3px 8px; font-size: 12px; }
+  .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 14px; text-align: center; color: var(--muted); cursor: pointer; }
+  .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .thumbs figure { margin: 0; position: relative; }
+  .thumbs img { height: 90px; border-radius: 6px; display: block; }
+  .thumbs figcaption { font-size: 11px; color: var(--muted); text-align: center; }
+  .thumbs button { position: absolute; top: 2px; right: 2px; padding: 0 6px; font-size: 12px; }
+  .check { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; }
+  .preview img { max-width: 100%; border-radius: 6px; margin-top: 8px; border: 1px solid var(--line); }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-top: 12px; }
+  .card .k { color: var(--muted); font-size: 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+  .chip.cb { background: #ffe5ee; color: #c2185b; }
+  @media (prefers-color-scheme: dark) { .chip.cb { background: #45202f; color: #ff8fb5; } }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+  .bar > div { height: 100%; background: var(--accent); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+  dt { color: var(--muted); font-size: 12px; } dd { margin: 0; overflow-wrap: anywhere; }
+  ul.events { margin: 0; padding-left: 18px; }
+  details { margin-top: 8px; } summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  pre { background: var(--code); border-radius: 8px; padding: 10px; overflow: auto; font-size: 12px; max-height: 320px; margin: 6px 0 0; }
+  .err { color: var(--bad); font-weight: 600; margin-top: 10px; } .note { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  .mem { display: grid; gap: 8px; }
+  .mem .item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  .mem .item.current { border-color: var(--accent); }
+  .mem .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .mem .head .id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+  .mem .head .sp { flex: 1; }
+  .mem .sum { margin-top: 4px; }
+  .mem .ctrl { display: flex; gap: 10px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .mem .ctrl input[type=number] { width: 70px; padding: 3px 6px; }
+  .reaction { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
+  .reaction .text { font-size: 15px; font-weight: 600; }
+  .reaction .meta { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 6px; font-size: 12px; color: var(--muted); align-items: center; }
+  .silent { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--code); color: var(--muted); text-align: center; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  td.s2 { color: var(--good); } td.s4 { color: var(--warn); } td.s5, td.s0 { color: var(--bad); }
+  .log-wrap { grid-column: 1 / -1; overflow-x: auto; }
+  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent;
+    border-radius: 50%; animation: s .7s linear infinite; vertical-align: -2px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  .feed-wrap { grid-column: 1 / -1; }
+  .feed-wrap h2 { flex-wrap: wrap; }
+  .feed { display: grid; gap: 10px; margin-top: 10px; max-height: 70vh; overflow-y: auto; }
+  .short { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto; animation: in .25s ease-out; }
+  .short.live { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .short .title { font-weight: 700; font-size: 14.5px; }
+  .short .sub { color: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; }
+  .short .strip { max-height: 120px; max-width: 360px; border-radius: 6px; border: 1px solid var(--line); }
+  .tl { grid-column: 1 / -1; display: grid; gap: 4px; font-size: 13px; }
+  .tl .ev { display: grid; grid-template-columns: 62px 96px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+  .tl .t { color: var(--muted); font-size: 11.5px; font-family: ui-monospace, monospace; }
+  .tag { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 6px; background: var(--code); color: var(--muted); text-align: center; }
+  .tag.frame { color: #2b7bd6; } .tag.ai { color: var(--accent); background: var(--accent-soft); }
+  .tag.SPEAK_NOW, .tag.delivered { color: #fff; background: var(--good); }
+  .tag.WAIT { color: var(--warn); } .tag.SAVE_FOR_LATER { color: #2b7bd6; } .tag.STAY_SILENT { color: var(--muted); }
+  .tag.err { color: #fff; background: var(--bad); }
+  .bubble { display: inline-block; background: var(--accent-soft); border-radius: 14px; padding: 4px 10px; font-weight: 600; }
+  @keyframes in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>ScrollMate backend playground</h1>
+  <div class="status" id="status"><span class="dot" id="dot"></span> checking /health…</div>
+  <button class="small" id="refreshHealth">Refresh</button>
+</header>
+
+<main>
+  <!-- 0. Live feed -->
+  <section class="feed-wrap">
+    <h2><span class="dot" id="feedDot"></span> Live from the extension
+      <span class="k" id="feedState" style="font-weight:400">connecting…</span>
+      <span style="flex:1"></span>
+      <label class="check" style="margin:0;font-weight:400"><input type="checkbox" id="feedQuiet" checked> hide repeated WAITs</label>
+      <button class="small" id="feedPause">Pause</button>
+      <button class="small" id="feedClear">Clear</button>
+    </h2>
+    <div class="note">Scroll YouTube Shorts with ScrollMate <b>Active</b>. Each Short gets a card: frames captured → what the AI saw → reactions proposed → the timing engine's decisions → what was shown.</div>
+    <div id="feed" class="feed"><div class="note" id="feedEmpty">Waiting for events…</div></div>
+  </section>
+
+  <!-- 1. Analyse -->
+  <section>
+    <h2><span class="n">1</span> Analyse a Short</h2>
+    <div class="drop" id="drop" tabindex="0" role="button">Drop up to 3 frames here, or click to choose (start, middle, end)</div>
+    <input type="file" id="file" accept="image/*" multiple hidden />
+    <div class="thumbs" id="thumbs"></div>
+    <div class="row">
+      <div><label for="videoId">Video ID</label><input type="text" id="videoId" /></div>
+      <div><label for="frameTimes">Frame times (s)</label><input type="text" id="frameTimes" value="1, 4.5, 8" /></div>
+    </div>
+    <label for="title">Title</label><input type="text" id="title" placeholder="5-Min Chocolate Cake" />
+    <label for="channel">Channel</label><input type="text" id="channel" placeholder="@SweetBake" />
+    <label for="captions">Visible captions (one per line)</label><textarea id="captions"></textarea>
+    <label class="check"><input type="checkbox" id="stitch" checked /> Stitch frames into one strip (same as the extension)</label>
+    <div class="btns">
+      <button class="primary" id="analyseBtn">Analyse</button>
+      <button id="newIdBtn">New video ID</button>
+      <button id="addMemBtn" disabled>Add to memory →</button>
+    </div>
+    <div id="analyseErr" class="err" hidden></div>
+    <div class="preview" id="preview"></div>
+    <div id="analysisOut"></div>
+  </section>
+
+  <!-- 2. Memory -->
+  <section>
+    <h2><span class="n">2</span> Memory (last 3 Shorts)</h2>
+    <div class="note">Oldest first. A 4th Short pushes out the oldest, like the extension's ring buffer. The highlighted one is the current Short.</div>
+    <div class="btns">
+      <button id="demoBtn">Load demo cakes</button>
+      <button id="editMemBtn">Edit as JSON</button>
+      <button id="clearMemBtn">Clear</button>
+    </div>
+    <div class="mem" id="mem" style="margin-top:10px"></div>
+    <div id="memJsonWrap" hidden>
+      <textarea id="memJson" style="min-height:220px;font-family:ui-monospace,monospace;font-size:12px;margin-top:10px"></textarea>
+      <div class="btns"><button class="primary" id="saveMemJson">Save JSON</button><button id="cancelMemJson">Cancel</button></div>
+      <div id="memJsonErr" class="err" hidden></div>
+    </div>
+  </section>
+
+  <!-- 3. React -->
+  <section>
+    <h2><span class="n">3</span> Generate reactions</h2>
+    <div class="row">
+      <div><label for="personality">Personality</label>
+        <select id="personality"><option value="witty">Witty</option><option value="hype">Hype</option><option value="chill">Chill</option></select></div>
+      <div><label for="frequency">Frequency</label>
+        <select id="frequency"><option value="rare">Rare</option><option value="balanced" selected>Balanced</option><option value="chatty">Chatty</option></select></div>
+    </div>
+    <label for="current">Current Short</label><select id="current"></select>
+    <div class="btns"><button class="primary" id="reactBtn">React</button></div>
+    <div id="reactErr" class="err" hidden></div>
+    <div id="reactOut"></div>
+    <div class="note">The backend only <em>proposes</em> reactions. In the extension, the timing engine then decides whether and when to show each one, using importance thresholds (Rare 0.75 · Balanced 0.55 · Chatty 0.4), cooldowns and natural pauses.</div>
+  </section>
+
+  <!-- Log -->
+  <section class="log-wrap">
+    <h2>Request log</h2>
+    <table><thead><tr><th>Time</th><th>Endpoint</th><th>Status</th><th>ms</th><th>Result</th></tr></thead><tbody id="log"></tbody></table>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let idSeq = 1;
+let frames = [];           // [{name, b64, url}]
+let lastAnalysis = null;
+let memory = [];           // MemoryItem[] (camelCase, like the extension)
+let currentId = null;
+const logRows = [];
+
+// ---------- request helper + log ----------
+async function call(method, path, body) {
+  const t0 = performance.now();
+  let status = 0, data = null, summary = '';
+  try {
+    const res = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+    status = res.status;
+    data = await res.json().catch(() => null);
+    if (!res.ok) summary = typeof data?.detail === 'string' ? data.detail : JSON.stringify(data?.detail ?? data).slice(0, 160);
+    else if (path.endsWith('/analyse')) summary = `${data.topic} · ${data.understandingLevel} · conf ${data.confidence}`;
+    else if (path.endsWith('/react')) summary = data.reactions.length ? data.reactions.map((r) => `“${r.text}”`).join(' / ') : 'no reactions (silence)';
+    else summary = JSON.stringify(data).slice(0, 160);
+    return { ok: res.ok, status, data, error: res.ok ? null : `HTTP ${status}: ${summary}` };
+  } catch (e) {
+    summary = String(e.message || e);
+    return { ok: false, status: 0, data: null, error: `Network error: ${summary}` };
+  } finally {
+    logRows.unshift({ t: new Date().toLocaleTimeString(), path: `${method} ${path}`, status, ms: Math.round(performance.now() - t0), summary });
+    logRows.length = Math.min(logRows.length, 20);
+    renderLog();
+  }
+}
+function renderLog() {
+  $('log').innerHTML = logRows.map((r) =>
+    `<tr><td>${esc(r.t)}</td><td>${esc(r.path)}</td><td class="s${String(r.status)[0]}">${r.status || 'ERR'}</td><td>${r.ms}</td><td>${esc(r.summary)}</td></tr>`).join('');
+}
+
+// ---------- health ----------
+async function health() {
+  const r = await call('GET', '/health');
+  const dot = '<span class="dot ' + (r.ok ? 'ok' : 'err') + '"></span>';
+  $('status').innerHTML = r.ok
+    ? `${dot} <span>mode <b>${r.data.mock ? 'MOCK (no LLM)' : 'live LLM'}</b></span>
+       <span>vision <b>${esc(r.data.visionModel)}</b></span>
+       <span>text <b>${esc(r.data.textModel)}</b></span>
+       <span>fallback <b>${esc(r.data.textFallbackModel ?? 'none')}</b></span>`
+    : `${dot} backend not reachable`;
+}
+
+// ---------- frames ----------
+function loadImage(src) {
+  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+}
+// Same as cropAndScale(): ≤512 px on the long side, JPEG 0.72.
+async function toFrame(file) {
+  const url = URL.createObjectURL(file);
+  const img = await loadImage(url);
+  const k = Math.min(1, 512 / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  const dataUrl = c.toDataURL('image/jpeg', 0.72);
+  URL.revokeObjectURL(url);
+  return { name: file.name, b64: dataUrl.split(',')[1], url: dataUrl };
+}
+// Same as stitchFrames(): height 384, 6 px gap, JPEG 0.75.
+async function stitch(list) {
+  const H = 384, GAP = 6;
+  const imgs = await Promise.all(list.map((f) => loadImage(f.url)));
+  const widths = imgs.map((i) => Math.round((i.naturalWidth * H) / i.naturalHeight));
+  const c = document.createElement('canvas');
+  c.width = widths.reduce((a, w) => a + w, 0) + GAP * (imgs.length - 1); c.height = H;
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, H);
+  let x = 0; imgs.forEach((im, i) => { ctx.drawImage(im, x, 0, widths[i], H); x += widths[i] + GAP; });
+  const dataUrl = c.toDataURL('image/jpeg', 0.75);
+  return { b64: dataUrl.split(',')[1], url: dataUrl };
+}
+async function addFiles(fileList) {
+  const imgs = [...fileList].filter((f) => f.type.startsWith('image/'));
+  for (const f of imgs) { if (frames.length >= 3) break; frames.push(await toFrame(f)); }
+  renderThumbs();
+}
+function renderThumbs() {
+  $('thumbs').innerHTML = frames.map((f, i) =>
+    `<figure><img src="${f.url}" alt="frame ${i + 1}"><button class="small" data-rm="${i}" aria-label="Remove frame ${i + 1}">×</button><figcaption>frame ${i + 1}</figcaption></figure>`).join('');
+  $('drop').textContent = frames.length >= 3 ? '3 frames selected (remove one to add another)' : 'Drop up to 3 frames here, or click to choose (start, middle, end)';
+}
+$('thumbs').addEventListener('click', (e) => { const i = e.target.dataset?.rm; if (i !== undefined) { frames.splice(+i, 1); renderThumbs(); } });
+$('drop').addEventListener('click', () => $('file').click());
+$('drop').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
+$('file').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
+['dragover', 'dragenter'].forEach((ev) => $('drop').addEventListener(ev, (e) => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach((ev) => $('drop').addEventListener(ev, () => $('drop').classList.remove('over')));
+$('drop').addEventListener('drop', (e) => { e.preventDefault(); addFiles(e.dataTransfer.files); });
+
+// ---------- analyse ----------
+const seenIds = new Set();
+function newId() { $('videoId').value = `ui-${idSeq++}`; }
+$('newIdBtn').onclick = newId;
+newId();
+
+function bar(v) { return `<div class="bar"><div style="width:${Math.round((v ?? 0) * 100)}%"></div></div>`; }
+
+$('analyseBtn').onclick = async () => {
+  const btn = $('analyseBtn'); const err = $('analyseErr');
+  err.hidden = true; $('preview').innerHTML = '';
+  const videoId = $('videoId').value.trim() || `ui-${idSeq++}`;
+  const times = $('frameTimes').value.split(',').map((s) => parseFloat(s)).filter((n) => !Number.isNaN(n));
+  let sendFrames = frames.map((f) => f.b64), composite = false, frameTimes = times.slice(0, frames.length);
+  try {
+    if ($('stitch').checked && frames.length > 1) {
+      const s = await stitch(frames);
+      sendFrames = [s.b64]; composite = true; frameTimes = times.slice(0, frames.length);
+      $('preview').innerHTML = `<div class="k note">Sent as one ${frames.length}-frame strip:</div><img src="${s.url}" alt="stitched strip">`;
+    }
+  } catch (e) { err.textContent = 'Could not stitch frames: ' + e; err.hidden = false; return; }
+
+  const body = {
+    videoId, frames: sendFrames, frameTimes, composite,
+    title: $('title').value.trim(), channel: $('channel').value.trim(),
+    captions: $('captions').value.split('\n').map((s) => s.trim()).filter(Boolean),
+  };
+  const cached = seenIds.has(videoId);
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Analysing…';
+  const r = await call('POST', '/scrollmate/analyse', body);
+  btn.disabled = false; btn.textContent = 'Analyse';
+  if (!r.ok) { err.textContent = r.error; err.hidden = false; return; }
+  seenIds.add(videoId);
+  lastAnalysis = r.data;
+  $('addMemBtn').disabled = false;
+  const a = r.data;
+  $('analysisOut').innerHTML = `
+    <div class="card">
+      ${cached ? '<div class="note">⚠ Reused video ID: this came from the server cache. Click “New video ID” to analyse again.</div>' : ''}
+      <dl>
+        <dt>Topic</dt><dd><b>${esc(a.topic)}</b></dd>
+        <dt>Summary</dt><dd>${esc(a.summary)}</dd>
+        <dt>Events</dt><dd>${a.events.length ? `<ul class="events">${a.events.map((e) => `<li>${e.timestamp ?? '?'}s: ${esc(e.description)} <span class="k">(${e.confidence})</span></li>`).join('')}</ul>` : '<span class="k">none</span>'}</dd>
+        <dt>Outcome</dt><dd>${esc(a.outcome ?? '-')}</dd>
+        <dt>Mood</dt><dd>${esc(a.mood)}</dd>
+        <dt>Themes</dt><dd><div class="chips">${a.themes.map((t) => `<span class="chip">${esc(t)}</span>`).join('') || '<span class="k">none</span>'}</div></dd>
+        <dt>Understanding</dt><dd>${esc(a.understandingLevel)}</dd>
+        <dt>Confidence</dt><dd>${a.confidence}${bar(a.confidence)}
+          <span class="k">${a.confidence < 0.35 ? 'Below 0.35: the extension would stay silent for this Short.' : 'Passes the extension’s 0.35 threshold.'}</span></dd>
+      </dl>
+      <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(a, null, 2))}</pre></details>
+    </div>`;
+};
+
+// ---------- memory ----------
+const DEMO = [
+  { videoId: 'demo-cake-success', topic: 'baking', summary: 'A home baker makes a layered chocolate cake and tops it with strawberries.',
+    events: [{ timestamp: 3, description: 'Batter goes into the pan.', confidence: 0.9 }, { timestamp: 8, description: 'A neat two-layer cake with strawberries is revealed.', confidence: 0.88 }],
+    outcome: 'The cake turned out well.', mood: 'wholesome', themes: ['cake', 'baking', 'success'], secondsWatched: 9, skipped: false },
+  { videoId: 'demo-cake-fail', topic: 'baking', summary: 'Someone attempts the same quick cake and pulls a blackened, smoking cake from the oven.',
+    events: [{ timestamp: 5, description: 'Smoke comes out of the oven.', confidence: 0.86 }, { timestamp: 7, description: 'The cake is burnt black on top.', confidence: 0.84 }],
+    outcome: 'The baking attempt failed.', mood: 'fail', themes: ['cake', 'baking', 'fail'], secondsWatched: 9, skipped: false },
+  { videoId: 'demo-cake-pro', topic: 'baking', summary: 'A professional pastry chef pours a glossy mirror glaze and finishes a stunning cake.',
+    events: [{ timestamp: 4, description: 'Mirror glaze is poured over the cake.', confidence: 0.9 }, { timestamp: 8, description: 'The finished cake reflects the kitchen lights.', confidence: 0.87 }],
+    outcome: 'A flawless professional cake.', mood: 'impressive', themes: ['cake', 'baking', 'success', 'professional'], secondsWatched: 9, skipped: false },
+];
+
+function toMemoryItem(a) {
+  return { videoId: a.videoId, topic: a.topic, summary: a.summary, events: (a.events || []).slice(0, 4), outcome: a.outcome,
+    mood: a.mood, themes: a.themes || [], secondsWatched: 9, skipped: false };
+}
+function pushMemory(item) {
+  memory = memory.filter((m) => m.videoId !== item.videoId);
+  memory.push(item);
+  while (memory.length > 3) memory.shift();
+  currentId = item.videoId;
+  renderMemory();
+}
+function renderMemory() {
+  if (!memory.some((m) => m.videoId === currentId)) currentId = memory.at(-1)?.videoId ?? null;
+  $('mem').innerHTML = memory.length ? memory.map((m, i) => `
+    <div class="item ${m.videoId === currentId ? 'current' : ''}">
+      <div class="head"><b>${i + 1}.</b> <span class="chip">${esc(m.skipped ? 'skipped' : m.topic)}</span>
+        <span class="id">${esc(m.videoId)}</span><span class="sp"></span>
+        <button class="small" data-cur="${i}">Set current</button><button class="small" data-del="${i}" aria-label="Remove">×</button></div>
+      <div class="sum">${esc(m.summary)}</div>
+      <div class="chips" style="margin-top:4px">${(m.themes || []).map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</div>
+      <div class="ctrl">
+        <label style="margin:0">watched <input type="number" min="0" step="1" value="${m.secondsWatched}" data-sec="${i}"> s</label>
+        <label style="margin:0;display:flex;gap:4px;align-items:center"><input type="checkbox" ${m.skipped ? 'checked' : ''} data-skip="${i}"> skipped</label>
+      </div>
+    </div>`).join('') : '<div class="note">Empty. Analyse a Short and add it, or load the demo cakes.</div>';
+  $('current').innerHTML = memory.map((m) => `<option value="${esc(m.videoId)}" ${m.videoId === currentId ? 'selected' : ''}>${esc(m.videoId)} · ${esc(m.topic)}</option>`).join('');
+  $('reactBtn').disabled = memory.length === 0;
+}
+$('mem').addEventListener('click', (e) => {
+  const d = e.target.dataset;
+  if (d.del !== undefined) { memory.splice(+d.del, 1); renderMemory(); }
+  if (d.cur !== undefined) { currentId = memory[+d.cur].videoId; renderMemory(); }
+});
+$('mem').addEventListener('change', (e) => {
+  const d = e.target.dataset;
+  if (d.sec !== undefined) memory[+d.sec].secondsWatched = Math.max(0, +e.target.value || 0);
+  if (d.skip !== undefined) { memory[+d.skip].skipped = e.target.checked; renderMemory(); }
+});
+$('current').onchange = (e) => { currentId = e.target.value; renderMemory(); };
+$('addMemBtn').onclick = () => { if (lastAnalysis) pushMemory(toMemoryItem(lastAnalysis)); };
+$('demoBtn').onclick = () => { memory = structuredClone(DEMO); currentId = memory.at(-1).videoId; renderMemory(); };
+$('clearMemBtn').onclick = () => { memory = []; renderMemory(); $('reactOut').innerHTML = ''; };
+$('editMemBtn').onclick = () => { $('memJson').value = JSON.stringify(memory, null, 2); $('memJsonWrap').hidden = false; $('memJsonErr').hidden = true; };
+$('cancelMemJson').onclick = () => { $('memJsonWrap').hidden = true; };
+$('saveMemJson').onclick = () => {
+  try {
+    const v = JSON.parse($('memJson').value);
+    if (!Array.isArray(v)) throw new Error('Must be a JSON array');
+    if (v.length > 3) throw new Error('At most 3 Shorts');
+    if (v.some((m) => !m || typeof m.videoId !== 'string')) throw new Error('Every item needs a string videoId');
+    memory = v; $('memJsonWrap').hidden = true; renderMemory();
+  } catch (e) { $('memJsonErr').textContent = e.message; $('memJsonErr').hidden = false; }
+};
+
+// ---------- react ----------
+$('reactBtn').onclick = async () => {
+  const btn = $('reactBtn'); const err = $('reactErr');
+  err.hidden = true;
+  if (!currentId) { err.textContent = 'Add at least one Short to memory first.'; err.hidden = false; return; }
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Thinking…';
+  const r = await call('POST', '/scrollmate/react', { memory, personality: $('personality').value, frequency: $('frequency').value, currentVideoId: currentId });
+  btn.disabled = false; btn.textContent = 'React';
+  if (!r.ok) { err.textContent = r.error; err.hidden = false; return; }
+  const thr = { rare: 0.75, balanced: 0.55, chatty: 0.4 }[$('frequency').value];
+  $('reactOut').innerHTML = r.data.reactions.length ? r.data.reactions.map((c) => `
+    <div class="reaction">
+      <div class="text">“${esc(c.text)}”</div>
+      <div class="meta">
+        ${c.isCallback ? '<span class="chip cb">callback</span>' : ''}
+        <span>importance <b>${c.importance.toFixed(2)}</b></span>
+        <span style="width:90px">${bar(c.importance)}</span>
+        <span>${c.importance >= thr ? 'passes' : 'below'} the ${$('frequency').value} threshold (${thr})</span>
+        <span>timing <b>${esc(c.preferredTiming)}</b></span>
+        <span>expires ${c.expiresAfterSeconds}s</span>
+        <span>${c.requiresQuietMoment ? 'needs a quiet moment' : 'can interrupt'}</span>
+      </div>
+    </div>`).join('') + `<details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r.data, null, 2))}</pre></details>`
+    : '<div class="silent">No reactions. The model (or the safety filter) chose silence for this Short.</div>';
+};
+
+// ---------- live feed ----------
+const shorts = new Map();   // videoId -> {el, tl, lastDecision: Map<text, code>}
+let feedPaused = false, liveId = null, es = null;
+const fmtT = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+function shortCard(videoId) {
+  if (shorts.has(videoId)) return shorts.get(videoId);
+  $('feedEmpty')?.remove();
+  const el = document.createElement('div');
+  el.className = 'short';
+  el.innerHTML = `<div><div class="title">${esc(videoId)}</div><div class="sub">${esc(videoId)}</div></div><div class="img"></div><div class="tl"></div>`;
+  $('feed').prepend(el);
+  const s = { el, tl: el.querySelector('.tl'), lastDecision: new Map() };
+  shorts.set(videoId, s);
+  while (shorts.size > 30) { const [k, v] = shorts.entries().next().value; v.el.remove(); shorts.delete(k); }
+  return s;
+}
+function setLive(videoId) {
+  if (liveId && shorts.has(liveId)) shorts.get(liveId).el.classList.remove('live');
+  liveId = videoId;
+  shorts.get(videoId)?.el.classList.add('live');
+}
+function line(card, ts, tag, cls, html) {
+  const d = document.createElement('div');
+  d.className = 'ev';
+  d.innerHTML = `<span class="t">${fmtT(ts)}</span><span class="tag ${cls}">${esc(tag)}</span><span>${html}</span>`;
+  card.tl.append(d);
+}
+
+function onFeedEvent(ev) {
+  const vid = ev.videoId || ev.target || 'unknown';
+  // Decisions belong to the Short the reaction is about.
+  const card = shortCard(ev.type === 'decision' ? ev.target || vid : vid);
+  const demo = ev.demo ? ' <span class="chip">demo</span>' : '';
+  switch (ev.type) {
+    case 'short_started':
+      card.el.querySelector('.title').innerHTML = esc(ev.title || '(no title yet)') + demo;
+      card.el.querySelector('.sub').textContent = `${vid}  ${ev.channel || ''}`;
+      setLive(vid);
+      line(card, ev.ts, 'new Short', '', 'Now on screen');
+      break;
+    case 'short_left':
+      line(card, ev.ts, 'left', '', `Watched ${ev.secondsWatched}s${ev.looped ? ', looped' : ''}${ev.skipped ? ' · <b>skipped</b>' : ''}`);
+      break;
+    case 'frame':
+      line(card, ev.ts, `frame ${ev.n}/${ev.of}`, ev.via === 'failed' ? 'err' : 'frame', `at ${ev.t}s via <b>${esc(ev.via)}</b>`);
+      break;
+    case 'analyse_request':
+      if (ev.title && card.el.querySelector('.title').textContent === vid) card.el.querySelector('.title').textContent = ev.title;
+      if (ev.image) card.el.querySelector('.img').innerHTML = `<img class="strip" alt="what the AI saw" src="data:image/jpeg;base64,${ev.image}">`;
+      line(card, ev.ts, 'AI looking', 'ai', `${ev.frames} image${ev.frames === 1 ? '' : 's'}${ev.composite ? ' (strip)' : ''} + title${ev.captions?.length ? ' + captions' : ''}${ev.image ? '' : ' <span class="k">(set SCROLLMATE_DEV_FEED_IMAGES=1 to see the strip)</span>'}`);
+      break;
+    case 'analyse_result': {
+      const a = ev.analysis;
+      const failed = /FAILED/.test(ev.path);
+      line(card, ev.ts, failed ? 'AI failed' : 'AI saw', failed ? 'err' : 'ai',
+        `<b>${esc(a.topic)}</b>: ${esc(a.summary)} <span class="k">· ${esc(a.understandingLevel)} · conf ${a.confidence} · ${ev.ms} ms · ${esc(ev.path)}</span>` +
+        (a.confidence < 0.35 ? ' <span class="k">→ too unsure, staying quiet</span>' : ''));
+      break;
+    }
+    case 'react_request':
+      line(card, ev.ts, 'AI joking', 'ai', `${esc(ev.personality)} · ${esc(ev.frequency)} · memory: ${ev.memory.map((m) => esc(m.skipped ? 'skipped' : m.topic)).join(' → ')}`);
+      break;
+    case 'react_result':
+      line(card, ev.ts, 'proposed', 'ai', ev.reactions.length
+        ? ev.reactions.map((r) => `“${esc(r.text)}” <span class="k">(${r.importance.toFixed(2)}${r.isCallback ? ', callback' : ''})</span>`).join('<br>') + ` <span class="k">· ${ev.ms} ms</span>`
+        : `nothing worth saying <span class="k">· ${ev.ms} ms · ${esc(ev.path)}</span>`);
+      break;
+    case 'reaction_blocked':
+      line(card, ev.ts, 'blocked', 'err', `Safety filter dropped “${esc(ev.text)}”`);
+      break;
+    case 'decision': {
+      const code = `${ev.decision}:${ev.reason.replace(/\d+s left/, '')}`;
+      if ($('feedQuiet').checked && ev.decision === 'WAIT' && card.lastDecision.get(ev.text) === code) break;
+      card.lastDecision.set(ev.text, code);
+      const where = ev.videoId && ev.videoId !== ev.target ? ` <span class="k">(on screen: ${esc(ev.videoId)})</span>` : '';
+      line(card, ev.ts, ev.decision.replace(/_/g, ' '), ev.decision, `${esc(ev.reason)} <span class="k">· “${esc(ev.text.slice(0, 70))}${ev.text.length > 70 ? '…' : ''}” at ${ev.currentTime}s</span>${where}`);
+      break;
+    }
+    case 'delivered':
+      line(card, ev.ts, 'SHOWN', 'delivered', `<span class="bubble">${esc(ev.text)}</span> <span class="k">${esc(ev.mode)} · ${esc(ev.reason)}</span>`);
+      break;
+    default:
+      line(card, ev.ts, ev.type, '', esc(JSON.stringify(ev).slice(0, 200)));
+  }
+  // Newest card sits at the top of the feed; keep the feed pinned there unless the user scrolled down.
+  if ($('feed').scrollTop < 40) $('feed').scrollTop = 0;
+}
+
+function connectFeed() {
+  es?.close();
+  es = new EventSource('/scrollmate/feed');
+  es.onopen = () => { $('feedDot').className = 'dot ok'; $('feedState').textContent = 'connected'; };
+  es.onerror = () => { $('feedDot').className = 'dot err'; $('feedState').textContent = 'disconnected, retrying…'; };
+  es.onmessage = (m) => { if (!feedPaused) { try { onFeedEvent(JSON.parse(m.data)); } catch (e) { console.warn(e); } } };
+}
+$('feedPause').onclick = () => { feedPaused = !feedPaused; $('feedPause').textContent = feedPaused ? 'Resume' : 'Pause'; $('feedState').textContent = feedPaused ? 'paused' : 'connected'; };
+$('feedClear').onclick = async () => {
+  await fetch('/scrollmate/feed/clear', { method: 'POST' });
+  shorts.clear(); liveId = null;
+  $('feed').innerHTML = '<div class="note" id="feedEmpty">Waiting for events…</div>';
+};
+connectFeed();
+
+$('refreshHealth').onclick = health;
+renderMemory();
+health();
+</script>
+</body>
+</html>

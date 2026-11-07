@@ -26,6 +26,10 @@ cp .env.example .env             # add ANTHROPIC_API_KEY (or any LiteLLM provide
 .venv/Scripts/python -m uvicorn app.main:app --port 8000     # macOS/Linux: .venv/bin/python
 ```
 
+Open **http://localhost:8000/ui** to test analyse/react without the extension: drop in frames, build the 3-Short memory, generate reactions, and see a request log.
+
+The same page has a **Live from the extension** feed. While you scroll Shorts with ScrollMate active, the extension reports each step to `POST /scrollmate/events`, and the page streams it from `GET /scrollmate/feed`. You see one card per Short: frames captured, what the AI saw, the reactions it proposed, each timing decision (WAIT, SPEAK_NOW, …) and what was shown. The feed is RAM only (the last 200 events). The frame strip appears only with `SCROLLMATE_DEV_FEED_IMAGES=1`.
+
 `GET http://localhost:8000/health` shows whether it is in **mock mode**. Mock mode turns on automatically when no key is set. It makes no LLM calls and gives text-only heuristic answers, so you can test the pipeline without a key.
 
 Models are any LiteLLM string. The defaults use **Groq's free tier** (`GROQ_API_KEY`):

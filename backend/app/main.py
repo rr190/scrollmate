@@ -15,10 +15,14 @@ import re
 import time
 from collections import OrderedDict, defaultdict, deque
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from . import config, mock
+from .feed import feed
 from .llm import structured
 from .models import (
     AnalyseRequest,
@@ -81,6 +85,20 @@ def safe(text: str) -> bool:
     return 3 <= len(text) <= 160 and not _BLOCK.search(text)
 
 
+_UI = Path(__file__).resolve().parent / "static" / "ui.html"
+
+
+@app.get("/", include_in_schema=False)
+async def root():
+    return RedirectResponse("/ui")
+
+
+@app.get("/ui", include_in_schema=False)
+async def ui():
+    """Dev playground for /analyse and /react without the extension."""
+    return FileResponse(_UI, media_type="text/html")
+
+
 @app.get("/health")
 async def health():
     return {
@@ -89,14 +107,38 @@ async def health():
         "visionModel": config.VISION_MODEL,
         "textModel": config.TEXT_MODEL,
         "textFallbackModel": config.TEXT_FALLBACK_MODEL,
+        "feedImages": config.DEV_FEED_IMAGES,
     }
+
+
+def _ms(t0: float) -> int:
+    return int((time.perf_counter() - t0) * 1000)
 
 
 @app.post("/scrollmate/analyse", response_model=Analysis, response_model_by_alias=True)
 async def analyse(req: AnalyseRequest, request: Request) -> Analysis:
     rate_limit(request)
+    t0 = time.perf_counter()
+    feed.publish(
+        "analyse_request",
+        videoId=req.video_id,
+        title=req.title,
+        channel=req.channel,
+        captions=req.captions[:5],
+        frames=len(req.frames),
+        composite=req.composite,
+        frameTimes=req.frame_times,
+        image=req.frames[0] if (req.frames and config.DEV_FEED_IMAGES) else None,
+    )
+    a, path = await _analyse(req, request)
+    feed.publish("analyse_result", videoId=req.video_id, path=path, ms=_ms(t0), analysis=a.model_dump(by_alias=True))
+    return a
+
+
+async def _analyse(req: AnalyseRequest, request: Request) -> tuple[Analysis, str]:
+    """Returns the analysis plus a short note on which path produced it (shown in the live feed)."""
     if req.video_id in _cache:
-        return _cache[req.video_id]
+        return _cache[req.video_id], "cache"
 
     has_text = bool(req.title or req.captions)
     if req.frames:
@@ -105,26 +147,36 @@ async def analyse(req: AnalyseRequest, request: Request) -> Analysis:
         level = "text_only" if has_text else "none"
 
     if level == "none":
-        return Analysis(video_id=req.video_id, topic="unknown", summary="Nothing observable.", understanding_level="none", confidence=0.0)
+        return (
+            Analysis(video_id=req.video_id, topic="unknown", summary="Nothing observable.", understanding_level="none", confidence=0.0),
+            "nothing to analyse",
+        )
 
     if config.MOCK:
         raw: LLMAnalysis | None = mock.analyse(req)
         level = "text_only"  # mock never looks at frames
+        path = "mock"
     else:
-        raw = await structured(LLMAnalysis, analyse_messages(req), model=config.VISION_MODEL if req.frames else config.TEXT_MODEL, temperature=0.2)
+        model = config.VISION_MODEL if req.frames else config.TEXT_MODEL
+        path = model
+        raw = await structured(LLMAnalysis, analyse_messages(req), model=model, temperature=0.2)
         if raw is None and req.frames and has_text:
             # Vision model failed or is rate limited: retry text-only on the text model.
             log.info("analyse %s: vision failed, falling back to %s (text only)", req.video_id, config.TEXT_MODEL)
             text_req = req.model_copy(update={"frames": [], "frame_times": [], "composite": False})
             raw = await structured(LLMAnalysis, analyse_messages(text_req), model=config.TEXT_MODEL, temperature=0.2)
             level = "text_only"
+            path = f"{model} failed -> {config.TEXT_MODEL} (text only)"
 
     if await request.is_disconnected():
         log.info("client left %s before analysis finished; result not cached", req.video_id)
 
     if raw is None:
         # Validation or provider failure: low-confidence placeholder so the extension stays quiet.
-        return Analysis(video_id=req.video_id, topic="unknown", summary=req.title[:120] or "Unknown Short", understanding_level=level, confidence=0.0)
+        return (
+            Analysis(video_id=req.video_id, topic="unknown", summary=req.title[:120] or "Unknown Short", understanding_level=level, confidence=0.0),
+            f"{path}: FAILED (see server log)",
+        )
 
     conf = raw.confidence if level != "text_only" else min(raw.confidence, 0.6)
     a = Analysis(
@@ -141,32 +193,58 @@ async def analyse(req: AnalyseRequest, request: Request) -> Analysis:
     if not await request.is_disconnected():
         cache_put(a)
     log.info("analysed %s: %s (%s, conf %.2f)", a.video_id, a.topic, a.understanding_level, a.confidence)
-    return a
+    return a, path
 
 
 @app.post("/scrollmate/react", response_model=ReactResponse, response_model_by_alias=True)
 async def react(req: ReactRequest, request: Request) -> ReactResponse:
     rate_limit(request)
+    t0 = time.perf_counter()
+    feed.publish(
+        "react_request",
+        videoId=req.current_video_id,
+        personality=req.personality,
+        frequency=req.frequency,
+        memory=[{"videoId": m.video_id, "topic": m.topic, "skipped": m.skipped} for m in req.memory],
+    )
+    res, path = await _react(req, request)
+    feed.publish(
+        "react_result",
+        videoId=req.current_video_id,
+        path=path,
+        ms=_ms(t0),
+        reactions=[r.model_dump(by_alias=True) for r in res.reactions],
+    )
+    return res
+
+
+async def _react(req: ReactRequest, request: Request) -> tuple[ReactResponse, str]:
     current = next((m for m in req.memory if m.video_id == req.current_video_id), None)
     if current is None or current.topic == "unknown":
-        return ReactResponse(reactions=[])
+        return ReactResponse(reactions=[]), "skipped: current Short unknown"
 
     if config.MOCK:
         raw: LLMReactions | None = mock.react(req)
+        path = "mock"
     else:
+        path = config.TEXT_MODEL
         raw = await structured(LLMReactions, react_messages(req), model=config.TEXT_MODEL, temperature=0.8)
         if raw is None and config.TEXT_FALLBACK_MODEL:
             log.info("react %s: falling back to %s", req.current_video_id, config.TEXT_FALLBACK_MODEL)
             raw = await structured(LLMReactions, react_messages(req), model=config.TEXT_FALLBACK_MODEL, temperature=0.8)
+            path = f"{config.TEXT_MODEL} failed -> {config.TEXT_FALLBACK_MODEL}"
 
-    if raw is None or await request.is_disconnected():
-        return ReactResponse(reactions=[])
+    if raw is None:
+        return ReactResponse(reactions=[]), f"{path}: FAILED (see server log)"
+    if await request.is_disconnected():
+        return ReactResponse(reactions=[]), f"{path}: client left"
 
     out: list[ReactionCandidate] = []
     for r in raw.reactions[:2]:
         text = " ".join(r.text.split())
         if not safe(text):
             log.info("dropped unsafe/invalid reaction: %r", text)
+            feed.publish("reaction_blocked", videoId=req.current_video_id, text=text)
             continue
         out.append(
             ReactionCandidate(
@@ -181,4 +259,37 @@ async def react(req: ReactRequest, request: Request) -> ReactResponse:
             )
         )
     log.info("react %s -> %s", req.current_video_id, [c.text for c in out])
-    return ReactResponse(reactions=out)
+    return ReactResponse(reactions=out), path
+
+
+# ---------- live feed (dev): extension events in, SSE out ----------
+_CLIENT_TYPES = {"short_started", "short_left", "frame", "decision", "delivered", "status"}
+
+
+@app.post("/scrollmate/events")
+async def client_events(events: list[dict]) -> dict:
+    """The extension reports what it is doing (fire-and-forget). Small scalar fields only, no images."""
+    n = 0
+    for ev in events[:50]:
+        t = ev.get("type")
+        if t not in _CLIENT_TYPES:
+            continue
+        reserved = {"type", "source", "id", "ts"}
+        data = {k: v for k, v in ev.items() if k not in reserved and isinstance(v, (str, int, float, bool, type(None)))}
+        data = {k: (v[:300] if isinstance(v, str) else v) for k, v in list(data.items())[:20]}
+        feed.publish(t, source="extension", **data)
+        n += 1
+    return {"accepted": n}
+
+
+@app.get("/scrollmate/feed", include_in_schema=False)
+async def feed_stream():
+    return StreamingResponse(
+        feed.stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
+@app.post("/scrollmate/feed/clear", include_in_schema=False)
+async def feed_clear() -> dict:
+    feed.clear()
+    return {"ok": True}

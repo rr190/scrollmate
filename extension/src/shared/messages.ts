@@ -22,7 +22,14 @@ export type BgRequest =
   | { type: 'GET_MEMORY' }
   | { type: 'CLEAR_MEMORY' }
   | { type: 'CANCEL_ALL' }
-  | { type: 'OPEN_STAGE' };
+  | { type: 'OPEN_STAGE' }
+  | { type: 'TELEMETRY'; event: TelemetryEvent };
+
+/** Small scalar-only events for the backend's live feed (/ui). Never frames or transcripts. */
+export type TelemetryEvent = { type: 'short_started' | 'short_left' | 'frame' | 'decision' | 'delivered' | 'status' } & Record<
+  string,
+  string | number | boolean | null
+>;
 
 export type CaptureResponse = { ok: true; data: string } | { ok: false; error: string };
 export interface AnalyseReactResponse {

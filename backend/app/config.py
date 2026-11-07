@@ -29,3 +29,6 @@ MOCK = _bool("SCROLLMATE_MOCK", not _HAS_KEY)
 EXTENSION_ORIGIN = os.getenv("SCROLLMATE_EXTENSION_ORIGIN", "").strip()
 
 RATE_LIMIT_PER_MIN = int(os.getenv("SCROLLMATE_RATE_LIMIT_PER_MIN", "40"))
+
+# Live feed on /ui: include the frame strip the AI saw (kept in RAM only, last 200 events).
+DEV_FEED_IMAGES = _bool("SCROLLMATE_DEV_FEED_IMAGES", False)
