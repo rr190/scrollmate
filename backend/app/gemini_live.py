@@ -21,6 +21,7 @@ from collections import OrderedDict
 
 from pydantic import ValidationError
 
+from .emotions import EMOTION_IDS
 from .models import LLMObserve
 
 log = logging.getLogger("scrollmate.live")
@@ -44,7 +45,7 @@ def _system() -> str:
         "exactly once, immediately. Never speak."
     )
 
-EMOTIONS = ["curious", "surprised", "laughing", "impressed", "worried", "cringe", "love", "sad"]
+EMOTIONS = list(EMOTION_IDS)
 MOMENTS = ["attempt", "reveal", "pov", "surprise", "tutorial", "continuation", "reaction", "other"]
 MOODS = ["funny", "wholesome", "impressive", "fail", "informative", "dramatic", "calm", "unclear"]
 

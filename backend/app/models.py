@@ -14,13 +14,15 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from .emotions import EMOTION_IDS
+
 Mood = Literal["funny", "wholesome", "impressive", "fail", "informative", "dramatic", "calm", "unclear"]
 UnderstandingLevel = Literal["visual_and_text", "visual_only", "text_only", "none"]
 Personality = Literal["witty", "hype", "chill"]
 Frequency = Literal["rare", "balanced", "chatty"]
 Timing = Literal["now", "after_video", "next_gap"]
 # How a friend watching beside you would *feel* at a moment (drives the character's face).
-Emotion = Literal["curious", "surprised", "laughing", "impressed", "worried", "cringe", "love", "sad"]
+Emotion = Literal[EMOTION_IDS]  # the catalog in app/emotions.py is the single source of truth
 # What kind of moment a Short is building towards (predicted from the title, confirmed by frames).
 MomentType = Literal["attempt", "reveal", "pov", "surprise", "tutorial", "continuation", "reaction", "other"]
 Change = Literal["none", "minor", "major"]

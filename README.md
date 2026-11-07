@@ -143,7 +143,19 @@ Both policies get exactly the same simulated reactions: frames at 10%, 50% and 8
      - **Level 2** lines wait for a pause.
   5. **Memory:** the final belief becomes the memory record once the Short ends, including any `running_joke`. Callbacks are used only when the pattern genuinely continues.
 - **Timed emotions** (`shared/emotions.ts`): the vision model tags each moment it sees with an emotion (surprised, laughing, impressed, worried, cringe, love, sad). The backend pins each one to the real frame time and turns them into `cues` (`build_cues()` in `backend/app/main.py`). Cues only come from frames, never from title text alone, and cues closer than 1.2 s are merged. The `CueTrack` fires a cue when playback *crosses* its time, 0.3 s early so the face lands on the moment. The face holds for about 1.4–2.2 s, depending on intensity, then eases back. A face change never interrupts, so unlike speech it may happen mid-playback. On real Shorts the analysis arrives near the end of the first play, so faces sync on the loop. In the demo the cues are hand-timed, so they sync on the first play. Bubbles and speech take priority over faces. Faces take priority over "thinking".
-- **Seamless faces** (`content/Character.tsx`): every eye, mouth, brow and extra is always drawn. Only the active ones are visible, and they crossfade (0.2 s) with a small scale-in, while the body does a squash-and-bounce on each change. Reduced motion keeps the crossfade and drops the movement.
+- **Character: Mochi** (`content/Character.tsx` and `content/mochi/`). This is the same mascot as the Companio landing page (`scrollmateWeb/companio-landing/src/companion`): a gumdrop body with a sprout, plus its eyes, mouths, brows and effects.
+  - **How it's ported:** `geometry.ts` and `faceParts.tsx` are copied unchanged. The landing page animates with the `motion` library, but the extension can't use an animation framework, so the per-emotion body motions, sprout sway, blinking, face swap and effects are plain CSS keyframes, generated in `mochi/moods.ts`.
+  - **Moods → Mochi emotions:**
+    - impressed → excited
+    - amused (while a bubble shows) → happy
+    - thinking and curious → curious
+    - love → supportive
+    - worried → concerned
+    - laughing → amused
+    - sleeping → sleepy
+    - surprised → surprised
+    - extra faces for idle, watching, speaking, cringe and sad
+  - **Reduced motion:** turns the animations off.
 - **Models and concurrency:**
   - **Vision:** OpenAI `gpt-5.6-terra`, with hidden reasoning off, about 2.5–4 s. Falls back to Groq Qwen, which still gets the image, then to text only.
   - **Text (reactions and captions):** `gpt-5.6-terra` and Groq `gpt-oss-20b` are **raced**. The first valid answer wins and the other request is cancelled: reactions take about 0.3–0.5 s, and an outage on either provider costs nothing (`race()` in `backend/app/llm.py`).
@@ -151,6 +163,20 @@ Both policies get exactly the same simulated reactions: frames at 10%, 50% and 8
   - **Warm-up:** models are pinged once at startup. This removes a cold start of about 5 s on the first Short.
 - **Caption step** (`POST /scrollmate/caption`): new visible caption lines are batched (at most one request every 4 s per Short) and sent to the fast text race. That runs alongside frame analysis. The answer can change the face straight away, and its reaction joins the timing engine's queue like any other. Most lines are ordinary and return nothing. This only works when CC is on.
 - **Backend:** every model output is validated by Pydantic through Instructor. Any failure, timeout or unsafe line becomes *no reaction*. Requests are rate limited per IP. The prompt explicitly requires a callback when remembered Shorts share a theme.
+
+## Emotions and avatars
+
+Click the character to choose an **avatar**:
+- **Companio:** Mochi, the landing page's mascot, which is the default.
+- **ScrollMate:** the original character with headphones.
+
+Both draw every emotion. TypeScript enforces it, because each avatar's faces are typed `Record<Mood, …>`.
+
+**Adding an emotion:**
+1. `backend/app/emotions.py`: add the id, emoji, when the AI should use it, and which Mochi face it maps to. The prompts, validation, the Gemini Live tool and the `/ui` emoji all read this catalog.
+2. `extension/src/shared/emotions.ts`: add the id to `EMOTION_IDS`.
+3. Give it a look in `extension/src/content/mochi/moods.ts` (`LOOKS`) and a face in `extension/src/content/avatars/ScrollMateCharacter.tsx` (`FACES`). `npx tsc --noEmit` fails until both exist.
+4. `python backend/scripts/check_emotions.py` confirms the backend, the extension and both avatars agree, and exits 1 if they don't.
 
 ## Privacy
 

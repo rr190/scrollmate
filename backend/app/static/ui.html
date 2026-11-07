@@ -237,7 +237,11 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let idSeq = 1;
-const EMO = { surprised: '😮', laughing: '😂', impressed: '🤩', worried: '😟', cringe: '😬', love: '🥰', sad: '😢' };
+// Emoji per emotion, loaded from the backend's catalog (app/emotions.py) so new emotions show up automatically.
+const EMO = {};
+fetch('/scrollmate/emotions').then((r) => r.json()).then((d) => {
+  for (const [id, e] of Object.entries(d.emotions || {})) EMO[id] = e.emoji;
+}).catch(() => {});
 const cueText = (cues) => (cues || []).map((c) => `${EMO[c.emotion] || ''} ${esc(c.emotion)} @ ${c.t}s`).join(' · ');
 let frames = [];           // [{name, b64, url}]
 let lastAnalysis = null;

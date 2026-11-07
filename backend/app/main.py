@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from . import config, mock
+from .emotions import EMOTIONS
 from .feed import feed
 from .gemini_live import is_live, live
 from .llm import ping, race, structured, warm_up
@@ -142,6 +143,12 @@ async def root():
 async def ui():
     """Dev playground for /analyse and /react without the extension."""
     return FileResponse(_UI, media_type="text/html")
+
+
+@app.get("/scrollmate/emotions")
+async def emotions_catalog() -> dict:
+    """The emotion catalog (ids, emoji, when to use, Mochi face) for /ui and tooling."""
+    return {"emotions": EMOTIONS}
 
 
 @app.get("/health")

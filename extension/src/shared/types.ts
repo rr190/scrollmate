@@ -1,5 +1,7 @@
 import type { Emotion, EmotionCue } from './emotions';
 
+export type AvatarKind = 'mochi' | 'scrollmate';
+
 export type Personality = 'witty' | 'hype' | 'chill';
 export type Frequency = 'rare' | 'balanced' | 'chatty';
 
@@ -11,6 +13,7 @@ export interface Settings {
   demo: boolean;
   demoLive: boolean; // demo uses the live LLM instead of canned reactions
   commentReactions: boolean; // deliberate hover on a visible top-level comment
+  avatar: AvatarKind; // which character to draw
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -21,6 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   demo: false,
   demoLive: false,
   commentReactions: true,
+  avatar: 'mochi',
 };
 
 export type UnderstandingLevel = 'visual_and_text' | 'visual_only' | 'text_only' | 'none';

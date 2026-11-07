@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from .models import AnalyseRequest, Belief, CaptionRequest, CommentRequest, ObserveRequest, ReactRequest, SwipeRequest
+from .emotions import emotion_guide, emotion_names
 
 ANALYSE_SYSTEM = """You are the eyes of ScrollMate, a companion that watches YouTube Shorts with a user.
 You get up to three frames from one Short (start, middle, end; their video times are given), sometimes
@@ -16,8 +17,7 @@ Timestamps: set each event's timestamp to the capture time of the frame where it
 given); if you cannot place an event in time, use null. List events in time order, at most one per frame.
 
 Emotion: for each event, pick how a friend watching beside the user would react AT THAT MOMENT:
-surprised (sudden or unexpected), laughing (genuinely funny), impressed (skillful, beautiful, satisfying),
-worried (something is about to go wrong), cringe (awkward or a fail), love (cute or wholesome), sad (gentle sadness).
+""" + emotion_guide() + """.
 Use null for ordinary moments. Most Shorts have 1-2 emotional moments, not one per event. Never use laughing or
 cringe for injuries, accidents involving people, or tragedies.
 Confidence values are your rough estimates, not calibrated probabilities."""
@@ -153,8 +153,8 @@ Personality: {persona}
 {frequency}
 
 Return:
-- emotion: how a friend would react to these words right now (surprised, laughing, impressed, worried, cringe,
-  love, sad), or null if they are ordinary. Most caption lines are ordinary: null is the usual answer.
+- emotion: how a friend would react to these words right now (""" + emotion_names() + """),
+  or null if they are ordinary. Most caption lines are ordinary: null is the usual answer.
 - reaction: ONE brief reaction (max 15 words; fragments are welcome) ONLY if the words themselves are genuinely funny, ironic or
   surprising. Quote or reference the actual words. Otherwise null. Never invent what happens in the video.
 Never joke about protected characteristics, tragedies, people's appearance, or sensitive personal information.""" + COMMENT_STYLE
@@ -230,8 +230,8 @@ You keep a running BELIEF about what is happening. For each new frame:
   appearance, and do not guess identity, age, ethnicity, religion, health or other sensitive traits.
 - Update the belief (topic, happening, expected_next, moment_type, outcome only if visible, mood, themes, confidence).
 - change: none (same as before), minor (more detail), major (it turned out differently than expected, or the payoff).
-- emotion: how a friend reacts to THIS frame right now (curious, surprised, laughing, impressed, worried, cringe,
-  love, sad) or null. Let the emotion EVOLVE with the story; do not repeat the same one by default.
+- emotion: how a friend reacts to THIS frame right now (""" + emotion_guide() + """)
+  or null. Let the emotion EVOLVE with the story; do not repeat the same one by default.
 - level: 0 nothing notable, 1 a face is enough, 2 a short comment, 3 a strong moment. Most frames are 0-1.
   Low confidence must mean a low level.
 - line: ONE brief reaction (max 15 words; fragments are welcome) only when level >= 2. Specific to what was seen. No hashtags. {emoji}

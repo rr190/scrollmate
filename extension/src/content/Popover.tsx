@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { MemoryRecord, Settings } from '../shared/types';
+import { AVATARS, Avatar } from './Avatar';
 import type { Controller, UiState } from './controller';
 
 function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
@@ -67,6 +68,28 @@ export function Popover({ ctl, state, onClose }: { ctl: Controller; state: UiSta
 
       <Segmented label="Personality" value={st.personality} options={[['witty', 'Witty'], ['hype', 'Hype'], ['chill', 'Chill']]} onChange={(v) => set({ personality: v })} />
       <Segmented label="Reactions" value={st.frequency} options={[['rare', 'Rare'], ['balanced', 'Balanced'], ['chatty', 'Chatty']]} onChange={(v) => set({ frequency: v })} />
+
+      <div className="sm-field">
+        <div className="sm-label">Avatar</div>
+        <div className="sm-avatars" role="radiogroup" aria-label="Avatar">
+          {AVATARS.map((a) => (
+            <button
+              key={a.id}
+              role="radio"
+              aria-checked={st.avatar === a.id}
+              className={`sm-avatar-opt ${st.avatar === a.id ? 'sm-avatar-on' : ''}`}
+              onClick={() => set({ avatar: a.id })}
+              title={a.hint}
+            >
+              <span className="sm-avatar-prev">
+                <Avatar kind={a.id} mood={st.avatar === a.id ? 'amused' : 'idle'} />
+              </span>
+              <span className="sm-avatar-name">{a.label}</span>
+              <span className="sm-hint">{a.hint}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="sm-field">
         <div className="sm-label">Remembers (last 3 Shorts)</div>

@@ -7,7 +7,24 @@
  * the analysis arrives near the end of the first play, so cues mostly fire on the loop.
  * Pure: time is injected so it can be tested without a browser.
  */
-export type Emotion = 'curious' | 'surprised' | 'laughing' | 'impressed' | 'worried' | 'cringe' | 'love' | 'sad';
+/**
+ * Emotions the AI can pick. Must match backend/app/emotions.py (run backend/scripts/check_emotions.py).
+ * Every avatar must draw every one of these: mochi/moods.ts LOOKS and avatars/ScrollMateCharacter.tsx
+ * FACES are typed Record<Mood, …>, so a missing face is a TypeScript error.
+ */
+export const EMOTION_IDS = [
+  'curious',
+  'surprised',
+  'laughing',
+  'impressed',
+  'worried',
+  'cringe',
+  'love',
+  'sad',
+  'happy', // Mochi's 😊 happy face
+  'bored', // Mochi's sleepy face, without the zzz
+] as const;
+export type Emotion = (typeof EMOTION_IDS)[number];
 
 export interface EmotionCue {
   t: number; // video seconds

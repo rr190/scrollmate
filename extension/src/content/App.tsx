@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Character } from './Character';
+import { Avatar, avatarAspect } from './Avatar';
 import type { Controller, Position } from './controller';
 import { Popover } from './Popover';
 import { COMMENT_TRAVEL_MS, commentPosition, companionSize } from './comments';
@@ -140,7 +140,7 @@ export function App({ ctl }: { ctl: Controller }) {
         )}
         <button
           className={`sm-char-btn ${dragPos ? 'sm-dragging' : ''}`}
-          style={{ width: size, height: Math.round(size * 0.86) }}
+          style={{ width: size, height: Math.round(size * avatarAspect(s.settings.avatar)) }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -156,7 +156,7 @@ export function App({ ctl }: { ctl: Controller }) {
           }}
         >
           <span className="sm-float">
-            <Character mood={s.mood} />
+            <Avatar kind={s.settings.avatar} mood={s.mood} />
           </span>
           <span className={`sm-dot ${st.enabled ? 'sm-on' : 'sm-off'}`} title={st.enabled ? 'Active' : 'Off'} />
           {st.demo && st.enabled && <span className="sm-demo-badge">DEMO</span>}
