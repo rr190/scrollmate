@@ -16,7 +16,7 @@ import {
 } from '../shared/messages';
 import { predictMoment } from '../shared/moments';
 import { CueTrack, type Emotion, type EmotionCue } from '../shared/emotions';
-import { COOLDOWN_MS, SAME_SHORT_GAP_MS, TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
+import { TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
 import { DEFAULT_SETTINGS, type MemoryRecord, type ReactionProposal, type Rect, type Settings } from '../shared/types';
 import { DEMO_SHORTS, DemoDriver, type DemoShort, type DemoView } from './demo';
 import { readPageText, ShortsWatcher, type LeftInfo, type ShortInfo } from './shorts';
@@ -107,7 +107,6 @@ export class Controller {
   private comments: CommentsWatcher | null = null;
   private commentAttempt: { requestId: string; videoId: string; readyAt: number; expiresAt: number; response?: CommentReactResponse; handled: boolean } | null = null;
   private seenComments = new Set<string>(); // bounded to the current Short; no persistent comment text
-  private lastCommentVisitAt: number | null = null;
   private commentsPaused = false; // settings/dragging take precedence over automatic movement
 
   constructor(public env: Env, private host: HTMLElement) {}
@@ -228,16 +227,12 @@ export class Controller {
     if (!commentPosition(target, window.innerWidth, window.innerHeight)) return { accepted: false, hint: 'No room beside comments. Try a wider window.' };
     if (this.seenComments.has(target.text)) return { accepted: false, hint: 'Already read this one. Try a different comment.' };
     if (this.seenComments.size >= 100) return { accepted: false, hint: 'Clear memory to read more comments on this Short.' };
-    const visitWait = this.lastCommentVisitAt === null ? 0 : COOLDOWN_MS[this.state.settings.frequency] - (now - this.lastCommentVisitAt);
-    const bubbleWait = this.engine.lastSpokeAt === null ? 0 : SAME_SHORT_GAP_MS[this.state.settings.frequency] - (now - this.engine.lastSpokeAt);
-    const wait = Math.max(visitWait, bubbleWait);
-    if (wait > 0) return { accepted: false, retryAfterMs: wait, hint: `Next comment in ${Math.ceil(wait / 1000)}s…` };
+    // No wait between comment visits (no cooldown, no reading gap). A bubble still on screen is handled above.
     this.cancelCommentVisit();
     const requestId = newId();
     const travel = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : COMMENT_TRAVEL_MS;
     this.commentAttempt = { requestId, videoId, readyAt: now + travel, expiresAt: now + 12_000, handled: false };
     this.seenComments.add(target.text);
-    this.lastCommentVisitAt = now;
     this.set({ commentVisit: { ...target, requestId, phase: 'running', emotion: null } });
     this.emit({ type: 'status', videoId, note: 'reading a selected comment' });
     void this.requestComment(target, requestId, videoId);
@@ -326,7 +321,6 @@ export class Controller {
     this.cancelCommentVisit();
     this.comments?.reset();
     this.seenComments.clear();
-    this.lastCommentVisitAt = null;
     this.cues.clear();
     this.engine.clear();
     this.speaker.cancel();

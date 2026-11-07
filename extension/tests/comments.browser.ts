@@ -158,10 +158,9 @@ async function run() {
 
   const count = commentRequests().length;
   hover(second); await wait(1100);
-  assert(commentRequests().length === count, 'a second comment must respect the movement cooldown');
-  assert(ctl.state.commentHint?.startsWith('Next comment in '), 'cooldown should explain why the buddy is waiting');
-  await wait(10000);
-  assert(ctl.state.commentVisit?.id && commentRequests().length === count + 1, 'a stationary hover should retry automatically after cooldown');
+  // No wait between comment visits: once the previous bubble is gone, the next comment is visited right away.
+  assert(ctl.state.commentVisit?.id && commentRequests().length === count + 1, 'the next comment should be visited with no countdown');
+  assert(!ctl.state.commentHint?.startsWith('Next comment in '), 'there should be no "Next comment in" countdown');
   reply(latest().requestId);
 
   await reset(); await select(second);
