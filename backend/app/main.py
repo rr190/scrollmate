@@ -34,6 +34,10 @@ from .models import (
     Belief,
     CaptionRequest,
     CaptionResponse,
+    CommentRequest,
+    CommentResponse,
+    CommentReactionCandidate,
+    LLMCommentReaction,
     EmotionCue,
     Event,
     LLMAnalysis,
@@ -55,6 +59,7 @@ from .prompts import (
     PERSONAS,
     analyse_messages,
     caption_messages,
+    comment_messages,
     observe_messages,
     react_messages,
     swipe_messages,
@@ -406,6 +411,42 @@ async def caption(req: CaptionRequest, request: Request) -> CaptionResponse:
         emotion=out.emotion,
         reactions=[r.model_dump(by_alias=True) for r in out.reactions],
     )
+    return out
+
+
+@app.post("/scrollmate/comment", response_model=CommentResponse, response_model_by_alias=True)
+async def comment(req: CommentRequest, request: Request) -> CommentResponse:
+    """One hovered comment; raw comment text is never cached or published to the dev feed."""
+    rate_limit(request)
+    out = CommentResponse(request_id=req.request_id, target_comment_id=req.comment_id)
+    if not req.text.strip() or await request.is_disconnected():
+        return out
+    if config.MOCK:
+        out.emotion = "curious"  # exercise the visit without pretending to understand the comment
+        return out
+    t0 = time.perf_counter()
+    try:
+        raw, winner = await asyncio.wait_for(
+            _text_call(LLMCommentReaction, comment_messages(req), temperature=0.7, max_tokens=CAPTION_MAX_TOKENS),
+            timeout=6.0,
+        )
+    except Exception as exc:
+        log.info("comment reaction unavailable: %s", type(exc).__name__)
+        return out
+    if raw is None or await request.is_disconnected():
+        return out
+    out.emotion = raw.emotion
+    if raw.reaction:
+        text = " ".join(raw.reaction.text.split())
+        if safe(text) and len(text.split()) <= 15:
+            out.reactions.append(CommentReactionCandidate(
+                text=text, importance=raw.reaction.importance,
+                target_video_id=req.video_id, target_comment_id=req.comment_id,
+                comment_request_id=req.request_id, preferred_timing="now",
+                expires_after_seconds=8, requires_quiet_moment=False, is_callback=False,
+            ))
+    # Record timing/provider only, not the comment, its author, or its generated paraphrase.
+    feed.publish("status", note="comment reaction ready", ms=_ms(t0), path=_race_path(winner))
     return out
 
 

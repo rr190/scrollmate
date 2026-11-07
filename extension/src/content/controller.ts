@@ -7,6 +7,7 @@
 import {
   sendBg,
   type CaptionReactResponse,
+  type CommentReactResponse,
   type CaptureResponse,
   type ObserveResponse,
   type ReactResponse,
@@ -15,11 +16,12 @@ import {
 } from '../shared/messages';
 import { predictMoment } from '../shared/moments';
 import { CueTrack, type Emotion, type EmotionCue } from '../shared/emotions';
-import { TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
+import { COOLDOWN_MS, SAME_SHORT_GAP_MS, TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
 import { DEFAULT_SETTINGS, type MemoryRecord, type ReactionProposal, type Rect, type Settings } from '../shared/types';
 import { DEMO_SHORTS, DemoDriver, type DemoShort, type DemoView } from './demo';
 import { readPageText, ShortsWatcher, type LeftInfo, type ShortInfo } from './shorts';
 import { Speaker } from './speech';
+import { CommentsWatcher, COMMENT_TRAVEL_MS, commentPosition, type CommentTarget, type CommentSelection } from './comments';
 
 const LOG = '[ScrollMate]';
 export type Mood = 'idle' | 'watching' | 'thinking' | 'amused' | 'speaking' | 'sleeping' | Emotion;
@@ -32,13 +34,15 @@ export interface Position {
 
 export interface UiState {
   mood: Mood;
-  bubble: { id: string; text: string } | null;
+  bubble: { id: string; text: string; commentRequestId?: string } | null;
   settings: Settings;
   position: Position | null;
   demo: DemoView | null;
   onShorts: boolean;
   frameSource: 'screen' | 'canvas' | 'text' | null;
   note: string | null;
+  commentHint: string | null;
+  commentVisit: (CommentTarget & { requestId: string; phase: 'running' | 'reading' | 'reacting'; emotion: Emotion | null }) | null;
 }
 
 interface ShortCtx {
@@ -81,6 +85,8 @@ export class Controller {
     onShorts: false,
     frameSource: null,
     note: null,
+    commentHint: null,
+    commentVisit: null,
   };
   engine = new TimingEngine({ frequency: 'balanced', voiceEnabled: false });
   private listeners = new Set<() => void>();
@@ -98,6 +104,11 @@ export class Controller {
   private epoch = 0; // bumps on disable/clear so late async results are ignored
   private logSent = 0; // decision-log entries already sent to the live feed
   private cues = new CueTrack(); // timed facial reactions for the Short on screen
+  private comments: CommentsWatcher | null = null;
+  private commentAttempt: { requestId: string; videoId: string; readyAt: number; expiresAt: number; response?: CommentReactResponse; handled: boolean } | null = null;
+  private seenComments = new Set<string>(); // bounded to the current Short; no persistent comment text
+  private lastCommentVisitAt: number | null = null;
+  private commentsPaused = false; // settings/dragging take precedence over automatic movement
 
   constructor(public env: Env, private host: HTMLElement) {}
 
@@ -130,6 +141,13 @@ export class Controller {
         onPlayback: (ev, video) => this.onPlayback(ev, video),
       });
       this.watcher.start();
+      this.comments = new CommentsWatcher({
+        enabled: () => this.commentsEnabled(),
+        onSelect: (target) => this.visitComment(target),
+        onCancel: () => this.cancelCommentVisit(),
+        onHint: (message) => this.setCommentHint(message),
+      });
+      this.comments.start();
       chrome.runtime.onMessage.addListener((m: { type?: string }) => {
         if (m?.type === 'ACTIVE_TAB_GRANTED') this.set({ note: 'Screen frames allowed for this tab.' });
       });
@@ -142,6 +160,8 @@ export class Controller {
   destroy() {
     window.clearInterval(this.tickTimer);
     this.watcher?.stop();
+    this.comments?.stop();
+    this.cancelCommentVisit();
     this.speaker.cancel();
   }
 
@@ -151,6 +171,7 @@ export class Controller {
     const next = { ...prev, ...patch };
     if (this.env === 'stage') next.demo = true;
     this.set({ settings: next });
+    if (!next.commentReactions || next.personality !== prev.personality || next.frequency !== prev.frequency) this.cancelCommentVisit();
     this.applyEngineOpts();
     chrome.storage.local.set({ [SETTINGS_KEY]: next }).catch(() => undefined);
 
@@ -174,6 +195,112 @@ export class Controller {
     chrome.storage.local.set({ [posKey(this.env)]: p }).catch(() => undefined);
   }
 
+  pauseCommentVisits(paused: boolean) {
+    this.commentsPaused = paused;
+    if (paused) { this.cancelCommentVisit(); this.comments?.reset(); }
+  }
+
+  private commentsEnabled() {
+    return this.env === 'youtube' && this.state.settings.enabled && this.state.settings.commentReactions &&
+      !this.state.settings.demo && !this.commentsPaused && !!this.watcher?.currentId;
+  }
+
+  private setCommentHint(message: string | null) {
+    if (this.state.commentHint === message) return;
+    this.set({ commentHint: message });
+    if (message) console.debug(LOG, 'comments:', message);
+  }
+
+  checkCommentDetection() {
+    const info = this.comments?.diagnostics();
+    console.info(LOG, 'comment detection', info);
+    const message = !info?.visible
+      ? 'No visible top-level comments detected. Open the Shorts comments panel first.'
+      : `${info.visible} visible comment${info.visible === 1 ? '' : 's'} detected. ${info.room ? 'Close these settings, then hover over the comment text.' : 'There is no room beside the comment panel; try a wider window.'}`;
+    this.set({ note: message });
+  }
+
+  private visitComment(target: CommentTarget): CommentSelection {
+    const videoId = this.watcher?.currentId;
+    const now = Date.now();
+    if (!this.commentsEnabled() || !videoId) return { accepted: false, hint: 'Close buddy settings to read comments.' };
+    if (this.state.bubble || this.speaking) return { accepted: false, retryAfterMs: 500, hint: 'Finishing this reaction…' };
+    if (!commentPosition(target, window.innerWidth, window.innerHeight)) return { accepted: false, hint: 'No room beside comments. Try a wider window.' };
+    if (this.seenComments.has(target.text)) return { accepted: false, hint: 'Already read this one. Try a different comment.' };
+    if (this.seenComments.size >= 100) return { accepted: false, hint: 'Clear memory to read more comments on this Short.' };
+    const visitWait = this.lastCommentVisitAt === null ? 0 : COOLDOWN_MS[this.state.settings.frequency] - (now - this.lastCommentVisitAt);
+    const bubbleWait = this.engine.lastSpokeAt === null ? 0 : SAME_SHORT_GAP_MS[this.state.settings.frequency] - (now - this.engine.lastSpokeAt);
+    const wait = Math.max(visitWait, bubbleWait);
+    if (wait > 0) return { accepted: false, retryAfterMs: wait, hint: `Next comment in ${Math.ceil(wait / 1000)}s…` };
+    this.cancelCommentVisit();
+    const requestId = newId();
+    const travel = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : COMMENT_TRAVEL_MS;
+    this.commentAttempt = { requestId, videoId, readyAt: now + travel, expiresAt: now + 12_000, handled: false };
+    this.seenComments.add(target.text);
+    this.lastCommentVisitAt = now;
+    this.set({ commentVisit: { ...target, requestId, phase: 'running', emotion: null } });
+    this.emit({ type: 'status', videoId, note: 'reading a selected comment' });
+    void this.requestComment(target, requestId, videoId);
+    this.tick();
+    return { accepted: true };
+  }
+
+  private async requestComment(target: CommentTarget, requestId: string, videoId: string) {
+    try {
+      const res = await sendBg<CommentReactResponse>({
+        type: 'COMMENT_REACT', requestId, videoId, commentId: target.id, text: target.text,
+        title: this.ctx?.title || readPageText().title,
+        personality: this.state.settings.personality, frequency: this.state.settings.frequency,
+      });
+      if (this.commentAttempt?.requestId !== requestId || res?.requestId !== requestId || res.targetCommentId !== target.id) return;
+      this.commentAttempt.response = res;
+      this.tick();
+    } catch {
+      if (this.commentAttempt?.requestId === requestId) this.cancelCommentVisit();
+    }
+  }
+
+  private cancelCommentVisit() {
+    const attempt = this.commentAttempt;
+    if (!attempt) return;
+    this.commentAttempt = null; // invalidate before an abort reply can arrive
+    const hadCommentBubble = this.state.bubble?.commentRequestId === attempt.requestId;
+    this.set({ commentVisit: null });
+    sendBg({ type: 'CANCEL_COMMENT', requestId: attempt.requestId }).catch(() => undefined);
+    if (hadCommentBubble) this.hideBubble();
+    this.engine.cancelComment(attempt.requestId, this.snapshot(), Date.now());
+    this.flushDecisions();
+  }
+
+  private tickComment(now: number) {
+    const attempt = this.commentAttempt;
+    const visit = this.state.commentVisit;
+    if (!attempt || !visit) return;
+    if (!this.commentsEnabled() || this.watcher?.currentId !== attempt.videoId ||
+        !this.comments?.selectionValid(visit.id) || now >= attempt.expiresAt) {
+      this.cancelCommentVisit();
+      return;
+    }
+    if (now < attempt.readyAt) return;
+    if (visit.phase === 'running') this.set({ commentVisit: { ...visit, phase: 'reading' } });
+    const res = attempt.response;
+    if (!res || attempt.handled) return;
+    attempt.handled = true;
+    if (res.error) {
+      this.seenComments.delete(visit.text);
+      this.cancelCommentVisit();
+      this.set({ note: `Comment reaction failed (${res.error.slice(0, 80)}). Check the backend.` });
+      return;
+    }
+    this.set({ commentVisit: { ...this.state.commentVisit!, emotion: res.emotion, phase: 'reacting' } });
+    // The extension binds targets and timing itself; the model cannot redirect a reaction.
+    this.propose((res.reactions ?? []).slice(0, 1).map((r) => ({
+      ...r, targetVideoId: attempt.videoId, targetCommentId: visit.id, commentRequestId: attempt.requestId,
+      preferredTiming: 'now', requiresQuietMoment: false, isCallback: false, expiresAfterSeconds: 8,
+    })));
+    if (!res.reactions?.length) attempt.expiresAt = Math.min(attempt.expiresAt, now + 2500);
+  }
+
   private applyEngineOpts() {
     this.engine.opts = { frequency: this.state.settings.frequency, voiceEnabled: this.state.settings.voice };
   }
@@ -181,6 +308,8 @@ export class Controller {
   /** Stop all processing immediately. */
   private disable() {
     this.epoch++;
+    this.cancelCommentVisit();
+    this.comments?.reset();
     this.cues.clear();
     this.engine.cancelAll(this.snapshot(), Date.now());
     this.speaker.cancel();
@@ -194,6 +323,10 @@ export class Controller {
 
   async clearMemory() {
     this.epoch++;
+    this.cancelCommentVisit();
+    this.comments?.reset();
+    this.seenComments.clear();
+    this.lastCommentVisitAt = null;
     this.cues.clear();
     this.engine.clear();
     this.speaker.cancel();
@@ -293,11 +426,15 @@ export class Controller {
       muted: !!v && (v.muted || v.volume === 0),
       audioQuiet: null, // no audio analysis without tabCapture: assume it might be loud
       navTimes: this.navTimes,
+      commentRequestId: this.commentAttempt?.requestId ?? null,
+      commentReady: this.state.commentVisit?.phase !== 'running',
+      readingComments: !!this.commentAttempt || !!this.state.commentHint,
     };
   }
 
   private tick() {
     const now = Date.now();
+    this.tickComment(now);
     if (this.demo) {
       this.demo.tick(now);
       this.set({ demo: this.demo.view(now) });
@@ -319,6 +456,10 @@ export class Controller {
 
   private computeMood(s: PlaybackSnapshot, now: number): Mood {
     if (!this.state.settings.enabled) return 'sleeping';
+    if (this.state.commentVisit) {
+      if (this.state.commentVisit.phase === 'running') return 'curious';
+      return this.state.commentVisit.emotion ?? (this.state.commentVisit.phase === 'reading' ? 'thinking' : 'curious');
+    }
     if (this.speaking) return 'speaking';
     if (this.state.bubble) return 'amused';
     const emo = this.cues.current(now); // a timed reaction to the moment on screen
@@ -334,8 +475,10 @@ export class Controller {
     console.log(LOG, 'DELIVER', d.mode, `"${d.candidate.text}"`, '-', d.reason);
     this.emit({ type: 'delivered', videoId: d.candidate.targetVideoId, text: d.candidate.text, mode: d.mode, reason: d.reason });
     window.clearTimeout(this.bubbleTimer);
-    this.set({ bubble: { id: d.candidate.id, text: d.candidate.text } });
+    this.set({ bubble: { id: d.candidate.id, text: d.candidate.text, commentRequestId: d.candidate.commentRequestId } });
     const linger = Math.min(8000, Math.max(4000, d.candidate.text.length * 75));
+    if (d.candidate.commentRequestId === this.commentAttempt?.requestId && this.commentAttempt)
+      this.commentAttempt.expiresAt = Date.now() + linger + 1000;
     if (d.mode === 'voice' && this.state.settings.voice && this.speaker.available) {
       this.speaker.speak(
         d.candidate.text,
@@ -359,6 +502,7 @@ export class Controller {
   hideBubble() {
     window.clearTimeout(this.bubbleTimer);
     if (this.state.bubble) this.set({ bubble: null });
+    if (this.commentAttempt?.handled) this.commentAttempt.expiresAt = Math.min(this.commentAttempt.expiresAt, Date.now() + 800);
   }
 
   private propose(proposals: ReactionProposal[], avoidTimes: number[] = []) {
@@ -402,6 +546,9 @@ export class Controller {
   private onShortChange(info: ShortInfo, prev: LeftInfo | null) {
     this.lastActivity = Date.now();
     if (this.demo) return;
+    this.cancelCommentVisit();
+    this.comments?.reset();
+    this.seenComments.clear();
     this.navTimes.push(info.startedAt);
     if (prev) this.handleLeft(prev);
     const prevTitle = this.ctx?.title ?? '';
@@ -466,6 +613,8 @@ export class Controller {
   }
 
   private onLeaveShorts(prev: LeftInfo | null) {
+    this.cancelCommentVisit();
+    this.comments?.reset();
     if (prev) this.handleLeft(prev);
     this.ctx = null;
     this.engine.cancelAll(this.snapshot(), Date.now(), 'left Shorts');
@@ -640,6 +789,8 @@ export class Controller {
   // ---------- demo ----------
   private startDemo() {
     if (this.demo) return;
+    this.cancelCommentVisit();
+    this.comments?.reset();
     this.epoch++;
     this.cues.clear();
     this.engine.clear();

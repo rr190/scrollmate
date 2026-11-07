@@ -60,6 +60,10 @@ export function Popover({ ctl, state, onClose }: { ctl: Controller; state: UiSta
 
       <Toggle label="AI companion" hint={st.enabled ? 'Watching with you' : 'Asleep. Nothing is analysed'} checked={st.enabled} onChange={(v) => set({ enabled: v })} />
       <Toggle label="Voice" hint="Speaks only when it's quiet" checked={st.voice} onChange={(v) => set({ voice: v })} />
+      {ctl.env === 'youtube' && <>
+        <Toggle label="Comment reactions" hint="Close settings, then hover over comment text for a second" checked={st.commentReactions} onChange={(v) => set({ commentReactions: v })} />
+        <button className="sm-link" onClick={() => ctl.checkCommentDetection()}>Check comment detection</button>
+      </>}
 
       <Segmented label="Personality" value={st.personality} options={[['witty', 'Witty'], ['hype', 'Hype'], ['chill', 'Chill']]} onChange={(v) => set({ personality: v })} />
       <Segmented label="Reactions" value={st.frequency} options={[['rare', 'Rare'], ['balanced', 'Balanced'], ['chatty', 'Chatty']]} onChange={(v) => set({ frequency: v })} />
@@ -124,7 +128,7 @@ export function Popover({ ctl, state, onClose }: { ctl: Controller; state: UiSta
         <div className="sm-privacy">
           <p>
             <b>Sent</b> (only while Active, only on youtube.com/shorts): up to 3 downscaled frames (≤512 px JPEG) per Short, its title, channel name and any captions visible on the page,
-            plus short text notes about the last 3 Shorts.
+            plus short text notes about the last 3 Shorts. With Comment reactions on, hovering for a second also sends that visible comment's text and the current video's notes. Author metadata is not sent.
           </p>
           <p>
             <b>Never stored</b>: frames, audio or transcripts. Memory is the last 3 one-line summaries, held in RAM and wiped by “Clear memory”. No other browsing data is read.

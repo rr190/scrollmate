@@ -11,6 +11,7 @@ import type {
   AnalyseReactResponse,
   BgRequest,
   CaptionReactResponse,
+  CommentReactResponse,
   CaptureResponse,
   ObserveResponse,
   ReactResponse,
@@ -331,6 +332,28 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
     case 'REMEMBER':
       remember(msg.record);
       return { ok: true };
+    case 'COMMENT_REACT': {
+      const empty: CommentReactResponse = { requestId: msg.requestId, targetCommentId: msg.commentId, emotion: null, reactions: [] };
+      try {
+        // Reuse this video's existing understanding. No extra vision call and no other tab's context.
+        const record = pendingRecords.get(msg.videoId) ?? memory.find((m) => m.videoId === msg.videoId);
+        return await postJson<CommentReactResponse>(
+          '/scrollmate/comment',
+          { requestId: msg.requestId, videoId: msg.videoId, commentId: msg.commentId, text: msg.text,
+            title: msg.title, videoSummary: record?.summary.slice(0, 600) ?? '',
+            personality: msg.personality, frequency: msg.frequency },
+          8_000, `comment:${sender.tab?.id ?? 'stage'}:${msg.requestId}`,
+        );
+      } catch (e) {
+        return { ...empty, error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    case 'CANCEL_COMMENT': {
+      const key = `comment:${sender.tab?.id ?? 'stage'}:${msg.requestId}`;
+      inflight.get(key)?.abort();
+      inflight.delete(key);
+      return { ok: true };
+    }
     case 'CAPTION_REACT': {
       try {
         const res = await postJson<CaptionReactResponse>(

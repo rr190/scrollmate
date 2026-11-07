@@ -22,6 +22,36 @@
 .sm-companion {
   position: absolute;
   pointer-events: none;
+  transition: transform 650ms cubic-bezier(0.22, 0.65, 0.3, 1);
+}
+.sm-companion.sm-manual-position { transition: none; }
+.sm-travelling .sm-char-btn, .sm-travelling .sm-bubble { pointer-events: none; }
+.sm-travelling .sm-float { animation: sm-run 180ms ease-in-out infinite; }
+.sm-travelling .sm-char-btn::before, .sm-travelling .sm-char-btn::after {
+  content: '';
+  position: absolute;
+  width: 22%; height: 10%; bottom: -1%; left: 23%;
+  border-radius: 50%; background: var(--sm-cream); border: 2px solid #bba6d9;
+  animation: sm-feet 180ms ease-in-out infinite alternate;
+}
+.sm-travelling .sm-char-btn::after { left: 52%; animation-delay: -180ms; }
+.sm-comment-outline {
+  position: absolute; box-sizing: border-box; pointer-events: none;
+  border: 2px solid rgba(138, 106, 230, 0.7); border-radius: 8px;
+  box-shadow: 0 0 0 3px rgba(138, 106, 230, 0.12);
+}
+.sm-reading-label {
+  display: block; width: max-content; max-width: 130px; margin: 2px auto 0;
+  padding: 3px 7px; border-radius: 8px; color: var(--sm-ink); background: var(--sm-paper);
+  font: 600 11px/1.3 system-ui, sans-serif; box-shadow: var(--sm-shadow); pointer-events: none;
+}
+@keyframes sm-run {
+  0%, 100% { transform: translateY(0) rotate(-5deg); }
+  50% { transform: translateY(-7px) rotate(5deg); }
+}
+@keyframes sm-feet {
+  from { transform: translateX(-4px) rotate(-20deg); }
+  to { transform: translateX(4px) rotate(20deg); }
 }
 
 .sm-char-btn {
@@ -257,6 +287,9 @@
   left: 30%;
   border-bottom-left-radius: 6px;
 }
+.sm-comment-left .sm-bubble { left: auto; right: 0; }
+.sm-comment-right .sm-bubble { left: 0; right: auto; }
+.sm-comment-below .sm-bubble { bottom: auto; top: calc(100% + 8px); }
 
 /* popover */
 .sm-popover {
@@ -539,6 +572,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .sm-companion { transition: none !important; }
+  .sm-travelling .sm-char-btn::before, .sm-travelling .sm-char-btn::after { display: none; }
   .sm-float,
   .sm-blinker,
   .sm-talk,

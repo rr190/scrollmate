@@ -73,6 +73,32 @@ To use a backend somewhere other than `http://localhost:8000`, build with `VITE_
 5. Scroll normally. Reactions appear only at natural gaps: a loop, a pause, or the end of a Short. They are dropped when you scroll away, unless they are a cross-Short callback.
 6. **Export log** in the popover downloads the timing engine's decision log as JSON (time, reaction, inputs, decision, reason).
 
+## Reactions to comments
+
+On a real YouTube Short, enable **AI companion** and **Comment reactions** in the buddy's settings, close the buddy's settings, then open YouTube's comments yourself. Clicking outside the buddy closes its settings automatically. Hold the mouse still over a visible top-level comment's text for one second. Passing over comments, links, replies, or buttons does not trigger a request.
+
+The buddy hops to a free lane beside the comments panel while the backend requests a text-only reaction from the selected text model. A purple outline identifies the selected comment. It reacts silently after arriving, or shows only an expression when no line is worth saying. Click its bubble to dismiss it and return home. Automatic visits preserve its saved, dragged position. If neither side has room, it stays home instead of covering the comments. Reduced-motion preferences disable travel animation.
+
+Visits have their own movement cooldown: Rare 45 seconds, Balanced 20 seconds, Chatty 12 seconds. Each comment text is attempted once per Short (up to 100); **Clear memory** resets this local session list. Reactions also share the existing gap between bubbles. A stationary hover retries after a previous bubble or cooldown finishes, with a short status under the buddy explaining the wait. Video reactions wait while the user is reading a comment, so repeated video bubbles cannot block selection indefinitely. **Check comment detection** in settings reports how many visible comments are recognised and whether there is room beside them; the page console includes detection counts without comment text.
+
+Scrolling, closing the panel, changing the comment's text/layout, navigating to another Short, opening buddy controls, dragging, disabling the feature, and switching personality cancel the visit. The background worker aborts that comment request, and the content script ignores late responses. The buddy returns home after its reaction.
+
+`POST /scrollmate/comment` accepts `requestId`, `videoId`, `commentId`, `text` (max 1200 characters), optional `title`/`videoSummary`, `personality` and `frequency`. It returns the same request/comment identifiers, an optional emotion, and zero or one reaction bound to that exact selection. The endpoint reuses structured output and the conversational personality prompts, has a six-second generation deadline, and degrades to silence on failure. Mock mode gives a curious expression without calling a model. No extra vision call or humaniser service is needed.
+
+The selected text and existing video notes are sent to the model provider only after a deliberate hover while the feature is on. Author metadata and the whole thread are not collected. Raw comment text is not persisted or added to the backend's live feed. YouTube may change its comment DOM; the detector supports current `ytd-comment-view-model` and older `ytd-comment-renderer` elements and intentionally limits support to top-level comments on Shorts.
+
+Local checks (no provider calls):
+
+```powershell
+# From backend/
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_comments.py -v
+# From extension/
+npm.cmd run test:comments
+npm.cmd run test:comments:browser  # installed Chrome/Edge, or set CHROME_PATH
+```
+
+The browser checks use a local fixture and stubbed model responses, in both normal and reduced-motion modes. They verify hover intent, placement, target changes, cancellation, navigation and preserving the home position. Real YouTube layouts and live reaction quality still need a manual check after reloading the extension.
+
 ## Demo mode (for the stage)
 
 - **Offline demo stage:** in the popover, click **Open offline demo stage ↗**, or open `chrome-extension://<id>/stage.html`. It's a fake Shorts player with three cakes, so it needs neither YouTube nor Wi-Fi.

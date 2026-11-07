@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Character } from './Character';
 import type { Controller, Position } from './controller';
 import { Popover } from './Popover';
+import { COMMENT_TRAVEL_MS, commentPosition, companionSize } from './comments';
 
 function useViewport() {
   const [vp, setVp] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -13,13 +14,9 @@ function useViewport() {
   return vp;
 }
 
-function charSize(w: number) {
-  return Math.round(Math.min(110, Math.max(80, w * 0.065)));
-}
-
 /** Default: upper right of the video, clear of the right-hand action column and the bottom title. */
 function defaultPosition(ctl: Controller, w: number, h: number): Position {
-  const size = charSize(w);
+  const size = companionSize(w);
   let anchor: DOMRect | null = null;
   if (ctl.env === 'stage') anchor = document.getElementById('sm-stage-video')?.getBoundingClientRect() ?? null;
   else anchor = document.querySelector('ytd-reel-video-renderer[is-active] video, ytd-shorts video')?.getBoundingClientRect() ?? null;
@@ -36,11 +33,39 @@ function defaultPosition(ctl: Controller, w: number, h: number): Position {
 export function App({ ctl }: { ctl: Controller }) {
   const s = useSyncExternalStore(ctl.subscribe, ctl.getState);
   const vp = useViewport();
-  const size = charSize(vp.w);
+  const size = companionSize(vp.w);
   const [open, setOpen] = useState(false);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const drag = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
   const [fallback, setFallback] = useState<Position | null>(null);
+  const [travelling, setTravelling] = useState(false);
+  const visitKey = s.commentVisit?.requestId ?? 'home';
+  const previousVisit = useRef(visitKey);
+  const companion = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (companion.current && !event.composedPath().includes(companion.current)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, [open]);
+
+  useEffect(() => {
+    if (visitKey === previousVisit.current) return;
+    previousVisit.current = visitKey;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    setTravelling(true);
+    const timer = window.setTimeout(() => setTravelling(false), COMMENT_TRAVEL_MS);
+    return () => window.clearTimeout(timer);
+  }, [visitKey]);
+
+  const dragging = dragPos !== null;
+  useEffect(() => {
+    ctl.pauseCommentVisits(open || dragging);
+    return () => ctl.pauseCommentVisits(false);
+  }, [ctl, open, dragging]);
 
   useEffect(() => {
     if (s.position) return;
@@ -61,16 +86,22 @@ export function App({ ctl }: { ctl: Controller }) {
   if (ctl.env === 'youtube' && !s.onShorts) return null; // dormant outside /shorts/
 
   const pos = s.position ?? fallback ?? { fx: 0.7, fy: 0.2 };
+  const visit = s.commentVisit;
+  const destination = visit ? commentPosition(visit, vp.w, vp.h) : null;
   const clampX = (x: number) => Math.min(vp.w - size - 4, Math.max(4, x));
   const clampY = (y: number) => Math.min(vp.h - size - 4, Math.max(4, y));
-  const x = dragPos ? dragPos.x : clampX(pos.fx * vp.w);
-  const y = dragPos ? dragPos.y : clampY(pos.fy * vp.h);
+  const x = dragPos ? dragPos.x : destination?.x ?? clampX(pos.fx * vp.w);
+  const y = dragPos ? dragPos.y : destination?.y ?? clampY(pos.fy * vp.h);
   const onRight = x + size / 2 > vp.w / 2;
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    drag.current = { sx: e.clientX, sy: e.clientY, ox: x, oy: y, moved: false };
+    // Use the rendered position, which may still be between home and a comment destination.
+    const rendered = e.currentTarget.getBoundingClientRect();
+    drag.current = { sx: e.clientX, sy: e.clientY, ox: rendered.left, oy: rendered.top, moved: false };
+    setDragPos({ x: rendered.left, y: rendered.top });
+    ctl.pauseCommentVisits(true);
   };
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
@@ -85,9 +116,9 @@ export function App({ ctl }: { ctl: Controller }) {
     const d = drag.current;
     drag.current = null;
     if (!d) return;
+    setDragPos(null);
     if (d.moved && dragPos) {
       ctl.savePosition({ fx: dragPos.x / vp.w, fy: dragPos.y / vp.h });
-      setDragPos(null);
     } else {
       setOpen((o) => !o);
     }
@@ -96,9 +127,14 @@ export function App({ ctl }: { ctl: Controller }) {
   const st = s.settings;
   return (
     <div className="sm-layer">
-      <div className={`sm-companion ${onRight ? 'sm-right' : 'sm-left'}`} style={{ left: x, top: y, width: size }}>
+      {visit && <div className="sm-comment-outline" aria-hidden="true" style={{ left: visit.rect.x - 4, top: visit.rect.y - 4, width: visit.rect.width + 8, height: visit.rect.height + 8 }} />}
+      <div
+        ref={companion}
+        className={`sm-companion ${onRight ? 'sm-right' : 'sm-left'} ${dragPos ? 'sm-manual-position' : ''} ${travelling || visit?.phase === 'running' ? 'sm-travelling' : ''} ${destination ? `sm-comment-${destination.side}` : ''} ${destination && y < 130 ? 'sm-comment-below' : ''}`}
+        style={{ left: 0, top: 0, transform: `translate3d(${x}px, ${y}px, 0)`, width: size }}
+      >
         {s.bubble && (
-          <div key={s.bubble.id} className="sm-bubble" role="status" aria-live="polite" onClick={() => ctl.hideBubble()}>
+          <div key={s.bubble.id} className="sm-bubble" style={destination ? { maxWidth: Math.max(60, Math.min(260, (destination.side === 'left' ? x + size : vp.w - x) - 40)) } : undefined} role="status" aria-live="polite" onClick={() => ctl.hideBubble()}>
             {s.bubble.text}
           </div>
         )}
@@ -114,6 +150,10 @@ export function App({ ctl }: { ctl: Controller }) {
           }}
           aria-label={`ScrollMate (${st.enabled ? 'active' : 'off'}). Click for settings, drag to move.`}
           aria-expanded={open}
+          onClick={(e) => {
+            // Pointer clicks are handled above to distinguish dragging; keyboard activation still opens settings.
+            if (e.detail === 0) setOpen((o) => !o);
+          }}
         >
           <span className="sm-float">
             <Character mood={s.mood} />
@@ -121,6 +161,8 @@ export function App({ ctl }: { ctl: Controller }) {
           <span className={`sm-dot ${st.enabled ? 'sm-on' : 'sm-off'}`} title={st.enabled ? 'Active' : 'Off'} />
           {st.demo && st.enabled && <span className="sm-demo-badge">DEMO</span>}
         </button>
+        {visit && !s.bubble && <span className="sm-reading-label" role="status">{visit.phase === 'running' ? 'Coming over…' : visit.phase === 'reading' ? 'Reading…' : 'Hmm…'}</span>}
+        {!visit && st.enabled && s.commentHint && <span className="sm-reading-label" role="status">{s.commentHint}</span>}
 
         {s.demo && ctl.env === 'youtube' && (
           <div className="sm-demo-strip">

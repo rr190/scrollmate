@@ -31,6 +31,9 @@ export interface PlaybackSnapshot {
   /** true = we know it's quiet, false = we know it's loud, null = unknown (assume it might be loud). */
   audioQuiet: boolean | null;
   navTimes: number[]; // ms timestamps of recent Short changes
+  commentRequestId?: string | null; // active, visible selection; absent for normal video viewing
+  commentReady?: boolean; // the buddy has arrived beside it
+  readingComments?: boolean; // a hovered comment may be waiting for the previous bubble to finish
 }
 
 export interface EngineOptions {
@@ -134,6 +137,8 @@ export function decide(
   now: number,
 ): Verdict {
   if (!s.enabled) return v('STAY_SILENT', 'disabled', 'companion disabled: queue cancelled');
+  if (c.targetCommentId && (!c.commentRequestId || c.commentRequestId !== s.commentRequestId))
+    return v('STAY_SILENT', 'stale_comment', 'selected comment changed or closed: reaction cancelled');
 
   if (mem.deliveredTexts.has(normalizeText(c.text)))
     return v('STAY_SILENT', 'duplicate', 'duplicate of a reaction already delivered');
@@ -149,6 +154,14 @@ export function decide(
   const onScreen = s.videoId === c.targetVideoId;
   if (!onScreen && !c.isCallback)
     return v('STAY_SILENT', 'stale', 'user scrolled away: reaction is about a Short no longer on screen');
+
+  if (s.readingComments && !c.targetCommentId)
+    return v('WAIT', 'reading_comments', 'reading a comment: video reactions wait');
+
+  if (s.commentRequestId) {
+    if (!c.targetCommentId) return v('WAIT', 'reading_comments', 'reading a comment: video reactions wait');
+    if (!s.commentReady) return v('WAIT', 'comment_travel', 'buddy is moving beside the selected comment');
+  }
 
   if (s.videoId && (mem.deliveredPerVideo.get(s.videoId) ?? 0) >= MAX_PER_SHORT[opts.frequency])
     return c.isCallback
@@ -170,6 +183,10 @@ export function decide(
       ? v('SAVE_FOR_LATER', 'cooldown', `${what} (${left}s left): saving the callback`)
       : v('WAIT', 'cooldown', `${what} (${left}s left)`);
   }
+
+  // A deliberate reading interaction is its own moment; always silent, even when Voice is enabled.
+  if (c.targetCommentId)
+    return v('SPEAK_NOW', 'selected_comment', 'reacting beside the visible selected comment', 'bubble');
 
   const gap = naturalGap(s, now);
   if (gap) {
@@ -244,6 +261,14 @@ export class TimingEngine {
   cancelAll(s: PlaybackSnapshot, now: number, reason = 'companion disabled: queue cancelled'): void {
     for (const c of this.queue) this.record(c, s, v('STAY_SILENT', 'cancelled', reason), now, true);
     this.queue = [];
+  }
+
+  cancelComment(requestId: string, s: PlaybackSnapshot, now: number): void {
+    this.queue = this.queue.filter((c) => {
+      if (c.commentRequestId !== requestId) return true;
+      this.record(c, s, v('STAY_SILENT', 'cancelled_comment', 'selected comment closed or changed'), now, true);
+      return false;
+    });
   }
 
   clear(): void {

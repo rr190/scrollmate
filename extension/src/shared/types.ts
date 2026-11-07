@@ -10,6 +10,7 @@ export interface Settings {
   frequency: Frequency;
   demo: boolean;
   demoLive: boolean; // demo uses the live LLM instead of canned reactions
+  commentReactions: boolean; // deliberate hover on a visible top-level comment
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -19,6 +20,7 @@ export const DEFAULT_SETTINGS: Settings = {
   frequency: 'balanced',
   demo: false,
   demoLive: false,
+  commentReactions: true,
 };
 
 export type UnderstandingLevel = 'visual_and_text' | 'visual_only' | 'text_only' | 'none';
@@ -71,6 +73,8 @@ export interface ReactionProposal {
   expiresAfterSeconds: number;
   requiresQuietMoment: boolean;
   isCallback: boolean;
+  targetCommentId?: string;
+  commentRequestId?: string;
 }
 
 export interface Rect {

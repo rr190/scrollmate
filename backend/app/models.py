@@ -163,6 +163,35 @@ class LLMCaptionReaction(BaseModel):
     reaction: LLMReaction | None = Field(None, description="One line ONLY if the words are genuinely funny or surprising. Usually null.")
 
 
+# ---------- hovered, visible comments (text only) ----------
+class CommentRequest(Camel):
+    request_id: str = Field(min_length=1, max_length=100)
+    video_id: str = Field(min_length=1, max_length=64)
+    comment_id: str = Field(min_length=1, max_length=100)
+    text: str = Field(min_length=1, max_length=1200)
+    title: str = Field(default="", max_length=300)
+    video_summary: str = Field(default="", max_length=600)
+    personality: Personality = "witty"
+    frequency: Frequency = "balanced"
+
+
+class CommentReactionCandidate(ReactionCandidate):
+    target_comment_id: str
+    comment_request_id: str
+
+
+class CommentResponse(Camel):
+    request_id: str
+    target_comment_id: str
+    emotion: Emotion | None = None
+    reactions: list[CommentReactionCandidate] = Field(default_factory=list, max_length=1)
+
+
+class LLMCommentReaction(BaseModel):
+    emotion: Emotion | None = Field(None, description="A considerate response to the comment, or null for ordinary or unclear text.")
+    reaction: LLMReaction | None = Field(None, description="One brief response to the selected comment, or null. Never invent video events or attack a commenter.")
+
+
 # ---------- swipe step: instant prediction from the title ----------
 
 

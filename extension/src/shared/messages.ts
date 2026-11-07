@@ -23,6 +23,17 @@ export type BgRequest =
   | { type: 'GET_MEMORY' }
   | { type: 'CLEAR_MEMORY' }
   | { type: 'CANCEL_ALL' }
+  | { type: 'CANCEL_COMMENT'; requestId: string }
+  | {
+      type: 'COMMENT_REACT';
+      requestId: string;
+      videoId: string;
+      commentId: string;
+      text: string;
+      title: string;
+      personality: Personality;
+      frequency: Frequency;
+    }
   | { type: 'OPEN_STAGE' }
   | { type: 'SWIPE'; videoId: string; title: string; channel: string; personality: Personality; frequency: Frequency }
   | {
@@ -64,6 +75,13 @@ export interface AnalyseReactResponse {
   error?: string;
 }
 export interface CaptionReactResponse {
+  emotion: Emotion | null;
+  reactions: ReactionProposal[];
+  error?: string;
+}
+export interface CommentReactResponse {
+  requestId: string;
+  targetCommentId: string;
   emotion: Emotion | null;
   reactions: ReactionProposal[];
   error?: string;

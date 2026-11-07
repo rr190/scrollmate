@@ -6,6 +6,8 @@
   "scripts": {
     "build": "vite build --mode content && vite build --mode background && vite build --mode stage",
     "typecheck": "tsc --noEmit",
+    "test:comments": "tsx --test tests/comments.test.ts",
+    "test:comments:browser": "node scripts/test-comments-browser.mjs",
     "eval": "tsx ../eval/timing_eval.ts"
   },
   "dependencies": {
