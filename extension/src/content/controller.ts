@@ -80,6 +80,10 @@ const USER_TO_EMOTION: Partial<Record<UserSignal['expression'], Emotion>> = {
   happy: 'happy',
   surprised: 'surprised',
   sad: 'sad',
+  disgusted: 'cringe', // 😬 "ew, same"
+  scared: 'worried', // 😟 nervous with you
+  angry: 'worried', // 😟 "uh oh": a companion backs off rather than mirroring anger
+  confused: 'curious', // 🤔 puzzled with you
 };
 const CAPTION_EVERY_MS = 4_000;
 const COMMENT_HISTORY_MAX = 5; // earlier comments sent as context
@@ -130,6 +134,8 @@ export class Controller {
   private commentHistory: PreviousComment[] = [];
   private commentsPaused = false; // settings/dragging take precedence over automatic movement
   private gazeDwell = new ZoneDwell(300); // a zone must hold 0.3 s (gaze jitters)
+  /** Latest gaze point in viewport px (not in state: read on demand, e.g. by roaming). */
+  gazePoint: { x: number; y: number } | null = null;
   private lastGazeAt = 0;
   private lastEyeContact = 0;
 
@@ -379,6 +385,7 @@ export class Controller {
 
   private clearGaze() {
     this.gazeDwell.reset();
+    this.gazePoint = null;
     if (this.state.gaze.zone || this.state.gaze.look) this.set({ gaze: { ...this.state.gaze, zone: null, look: null } });
   }
 
@@ -407,6 +414,7 @@ export class Controller {
     this.lastGazeAt = now;
     const scr = screen as Screen & { availLeft?: number };
     const p = screenToViewport({ x: fx, y: fy }, window, { width: scr.width, height: scr.height, left: scr.availLeft ?? 0, top: 0 });
+    this.gazePoint = p;
     const raw = gazeZone(p, this.zoneRects(), { w: window.innerWidth, h: window.innerHeight }, this.gazeDwell.zone);
     const changed = this.gazeDwell.update(raw, now);
     const videoId = this.demo ? this.demo.short.videoId : this.watcher?.currentId;

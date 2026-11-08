@@ -25,7 +25,7 @@ const server = createServer(async (req, res) => {
   }
 });
 try {
-  await build({ entryPoints: ['tests/comments.browser.ts'], bundle: true, outfile: bundle, format: 'iife',
+  await build({ entryPoints: [process.argv[2] ?? 'tests/comments.browser.ts'], bundle: true, outfile: bundle, format: 'iife',
     loader: { '.css': 'text' }, define: { 'process.env.NODE_ENV': '"production"' } });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
@@ -33,7 +33,7 @@ try {
     const args = ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
       '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-features=Translate',
       `--user-data-dir=${join(temporary, reduced ? 'reduced' : 'normal')}`, '--window-size=1440,1000',
-      '--virtual-time-budget=50000', '--dump-dom', ...(reduced ? ['--force-prefers-reduced-motion'] : []),
+      `--virtual-time-budget=${process.argv[3] ?? 50000}`, '--dump-dom', ...(reduced ? ['--force-prefers-reduced-motion'] : []),
       `http://127.0.0.1:${port}/shorts/test123`];
     const result = await new Promise((resolve, reject) => {
       const child = spawn(chrome, args, { windowsHide: true });

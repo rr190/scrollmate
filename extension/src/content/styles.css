@@ -35,6 +35,14 @@
   animation: sm-feet 180ms ease-in-out infinite alternate;
 }
 .sm-travelling .sm-char-btn::after { left: 52%; animation-delay: -180ms; }
+/* idle roaming: an unhurried stroll, not the run used to reach a comment */
+.sm-strolling .sm-float { animation: sm-stroll 650ms ease-in-out infinite; }
+.sm-strolling .sm-char-btn::before, .sm-strolling .sm-char-btn::after { animation-duration: 650ms; }
+.sm-strolling .sm-char-btn::after { animation-delay: -650ms; }
+@keyframes sm-stroll {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-3px) rotate(2deg); }
+}
 .sm-comment-outline {
   position: absolute; box-sizing: border-box; pointer-events: none;
   border: 2px solid rgba(138, 106, 230, 0.7); border-radius: 8px;
@@ -285,7 +293,7 @@
 }
 .sm-comment-left .sm-bubble { left: auto; right: 0; }
 .sm-comment-right .sm-bubble { left: 0; right: auto; }
-.sm-comment-below .sm-bubble { bottom: auto; top: calc(100% + 8px); }
+.sm-comment-below .sm-bubble, .sm-bubble-below .sm-bubble { bottom: auto; top: calc(100% + 8px); }
 
 /* popover */
 .sm-popover {

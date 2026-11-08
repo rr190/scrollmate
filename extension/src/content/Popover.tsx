@@ -70,6 +70,7 @@ export function Popover({ ctl, state, onClose }: { ctl: Controller; state: UiSta
 
       <Toggle label="AI companion" hint={st.enabled ? 'Watching with you' : 'Asleep. Nothing is analysed'} checked={st.enabled} onChange={(v) => set({ enabled: v })} />
       <Toggle label="Voice" hint="Speaks only when it's quiet" checked={st.voice} onChange={(v) => set({ voice: v })} />
+      <Toggle label="Roam around 🚶" hint="Small steps left and right; drag to park it for 30 s" checked={st.roam} onChange={(v) => set({ roam: v })} />
       <Toggle
         label="React to me 📷"
         hint={st.userCam ? {off: 'Off. Mochi only watches the video', starting: 'Starting the camera…', on: 'On: laughs along with you, waits while you look away', needs_permission: 'Allow the camera in the tab that opened', error: 'Camera unavailable'}[state.camera] : 'Webcam, on this computer only. Off by default'}

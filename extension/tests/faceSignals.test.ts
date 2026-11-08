@@ -99,3 +99,24 @@ test('iris position: centred iris -> 0.5, 0.5; uncalibrated gaze -> screen centr
   const g = uncalibratedGaze(p, 0, 0);
   assert.ok(Math.abs(g.x - 0.5) < 1e-9);
 });
+
+test('classify: new expressions from face muscles (disgusted, scared, angry, confused)', () => {
+  assert.equal(classify({ noseSneerLeft: 0.5, noseSneerRight: 0.5 }).expression, 'disgusted');
+  assert.equal(classify({ mouthUpperUpLeft: 0.4, mouthUpperUpRight: 0.4, eyeSquintLeft: 0.3, eyeSquintRight: 0.3 }).expression, 'disgusted');
+  assert.equal(
+    classify({ browInnerUp: 0.5, eyeWideLeft: 0.4, eyeWideRight: 0.4, mouthStretchLeft: 0.4, mouthStretchRight: 0.4, jawOpen: 0.4 }).expression,
+    'scared',
+    'fear beats surprise when the mouth is pulled sideways',
+  );
+  assert.equal(classify({ browDownLeft: 0.6, browDownRight: 0.6, mouthPressLeft: 0.4, mouthPressRight: 0.4 }).expression, 'angry');
+  assert.equal(classify({ browOuterUpLeft: 0.6, browOuterUpRight: 0.05 }).expression, 'confused');
+});
+
+test('classify: the new rules do not steal the old expressions', () => {
+  // smiling with a little nose wrinkle is still happy, not disgust
+  assert.equal(classify({ mouthSmileLeft: 0.6, mouthSmileRight: 0.6, noseSneerLeft: 0.3, noseSneerRight: 0.3 }).expression, 'happy');
+  // concentrating (brows down alone) is not anger
+  assert.equal(classify({ browDownLeft: 0.6, browDownRight: 0.6 }).expression, 'neutral');
+  // both brows up with an open jaw is still surprise
+  assert.equal(classify({ jawOpen: 0.6, browOuterUpLeft: 0.5, browOuterUpRight: 0.5 }).expression, 'surprised');
+});

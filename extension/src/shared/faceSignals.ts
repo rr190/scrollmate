@@ -6,7 +6,7 @@
  * Runs on-device only: these labels are the only thing that leaves the camera page, and they
  * stay inside the extension (never sent to the backend).
  */
-export type UserExpression = 'neutral' | 'happy' | 'laughing' | 'surprised' | 'sad';
+export type UserExpression = 'neutral' | 'happy' | 'laughing' | 'surprised' | 'sad' | 'disgusted' | 'scared' | 'angry' | 'confused';
 
 export interface UserSignal {
   present: boolean; // a face is in view
@@ -36,6 +36,12 @@ export const FEATURES = {
   wide: ['eyeWideLeft', 'eyeWideRight'],
   squint: ['eyeSquintLeft', 'eyeSquintRight'],
   frown: ['mouthFrownLeft', 'mouthFrownRight'],
+  sneer: ['noseSneerLeft', 'noseSneerRight'], // nose wrinkle (disgust)
+  upperLip: ['mouthUpperUpLeft', 'mouthUpperUpRight'], // upper lip raised (disgust)
+  browDown: ['browDownLeft', 'browDownRight'], // brows lowered / pulled together (anger)
+  press: ['mouthPressLeft', 'mouthPressRight'], // lips pressed (anger)
+  stretch: ['mouthStretchLeft', 'mouthStretchRight'], // mouth pulled sideways (fear)
+  browAsym: [], // one brow up, the other not (confusion): computed specially in features()
 } as const;
 export type Feature = keyof typeof FEATURES;
 export type FeatureValues = Record<Feature, number>;
@@ -57,17 +63,40 @@ export const THRESHOLDS = {
   sadBrows: 0.12,
   sadStrongFrown: 0.3,
   sadMaxSmile: 0.08,
+  // Added from FER's emotion set (angry, disgust, fear) + confused, using MediaPipe's own muscles.
+  // Starting points: tune them on /ui/face, where each bar shows its trigger mark.
+  disgustSneer: 0.25, // nose wrinkle... or raised upper lip with a squint
+  disgustUpperLip: 0.25,
+  disgustSquint: 0.12,
+  disgustMaxSmile: 0.3,
+  fearBrows: 0.22, // inner brows up + eyes wide + mouth stretched sideways
+  fearWide: 0.12,
+  fearStretch: 0.15,
+  fearMaxSmile: 0.15,
+  angryBrowDown: 0.3, // brows down, plus pressed lips, a squint or a sneer
+  angryPress: 0.15,
+  angrySquint: 0.2,
+  angrySneer: 0.15,
+  angryMaxSmile: 0.15,
+  confusedAsym: 0.25, // one brow clearly higher than the other
+  confusedMaxSmile: 0.25,
+  confusedMaxJaw: 0.3,
 } as const;
 
 const mean = (b: Record<string, number>, keys: readonly string[]) => keys.reduce((s, k) => s + (b[k] ?? 0), 0) / keys.length;
 
 export function features(b: Record<string, number>): FeatureValues {
   const out = {} as FeatureValues;
-  for (const f of Object.keys(FEATURES) as Feature[]) out[f] = mean(b, FEATURES[f]);
+  for (const f of Object.keys(FEATURES) as Feature[]) out[f] = FEATURES[f].length ? mean(b, FEATURES[f]) : 0;
+  // one brow up and the other not: the bigger left/right difference of "brow up" or "brow down"
+  out.browAsym = Math.max(
+    Math.abs((b.browOuterUpLeft ?? 0) - (b.browOuterUpRight ?? 0)),
+    Math.abs((b.browDownLeft ?? 0) - (b.browDownRight ?? 0)),
+  );
   return out;
 }
 
-const ZERO: FeatureValues = { smile: 0, jaw: 0, browInner: 0, browOuter: 0, wide: 0, squint: 0, frown: 0 };
+const ZERO = Object.fromEntries(Object.keys(FEATURES).map((k) => [k, 0])) as FeatureValues;
 
 /** Change from the resting face, never negative. */
 export function deltas(b: Record<string, number>, base: FeatureValues = ZERO): FeatureValues {
@@ -84,11 +113,20 @@ export function classify(b: Record<string, number>, base: FeatureValues = ZERO):
   const brows = Math.max(d.browInner, d.browOuter);
   if (d.smile > T.laughSmile && (d.jaw > T.laughJaw || d.squint > T.laughSquint))
     return { expression: 'laughing', strength: Math.min(1, (d.smile + d.jaw) / 1.2) };
+  // fear before surprise: both raise the brows, fear also pulls the mouth sideways
+  if (d.browInner > T.fearBrows && d.wide > T.fearWide && d.stretch > T.fearStretch && d.smile < T.fearMaxSmile)
+    return { expression: 'scared', strength: Math.min(1, d.browInner + d.stretch + d.wide) };
   if (d.jaw > T.surpriseJaw && (brows > T.surpriseBrows || d.wide > T.surpriseWide) && d.smile < T.surpriseMaxSmile)
     return { expression: 'surprised', strength: Math.min(1, (d.jaw + brows) / 1.1) };
   if (d.smile > T.happySmile) return { expression: 'happy', strength: Math.min(1, d.smile * 1.2) };
+  if (d.smile < T.disgustMaxSmile && (d.sneer > T.disgustSneer || (d.upperLip > T.disgustUpperLip && d.squint > T.disgustSquint)))
+    return { expression: 'disgusted', strength: Math.min(1, (d.sneer + d.upperLip) * 1.2) };
+  if (d.smile < T.angryMaxSmile && d.browDown > T.angryBrowDown && (d.press > T.angryPress || d.squint > T.angrySquint || d.sneer > T.angrySneer))
+    return { expression: 'angry', strength: Math.min(1, d.browDown + Math.max(d.press, d.squint, d.sneer)) };
   if (d.smile < T.sadMaxSmile && ((d.frown > T.sadFrown && d.browInner > T.sadBrows) || d.frown > T.sadStrongFrown))
     return { expression: 'sad', strength: Math.min(1, d.frown * 2 + d.browInner) };
+  if (d.browAsym > T.confusedAsym && d.smile < T.confusedMaxSmile && d.jaw < T.confusedMaxJaw)
+    return { expression: 'confused', strength: Math.min(1, d.browAsym * 2) };
   return { expression: 'neutral', strength: 0 };
 }
 

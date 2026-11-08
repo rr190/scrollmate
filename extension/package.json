@@ -10,6 +10,8 @@
     "test:comments:browser": "node scripts/test-comments-browser.mjs",
     "eval": "tsx ../eval/timing_eval.ts",
     "setup:mediapipe": "node scripts/setup-mediapipe.mjs",
+    "test:roam": "tsx --test tests/roam.test.ts",
+    "test:roam:browser": "node scripts/test-comments-browser.mjs tests/roam.browser.ts 110000",
     "test:face": "tsx --test tests/faceSignals.test.ts tests/gaze.test.ts tests/gazeZones.test.ts",
     "build:face-lib": "esbuild src/shared/faceSignals.ts --format=esm --outfile=../backend/app/static/faceSignals.js --log-level=warning"
   },

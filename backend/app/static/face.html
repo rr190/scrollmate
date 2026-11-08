@@ -190,10 +190,12 @@ import {
 } from '/ui/mediapipe/faceSignals.js';
 
 const $ = (id) => document.getElementById(id);
-const EMOJI = { neutral: '😐', happy: '😊', laughing: '😂', surprised: '😮', sad: '😢' };
+const EMOJI = { neutral: '😐', happy: '😊', laughing: '😂', surprised: '😮', sad: '😢', disgusted: '🤢', scared: '😨', angry: '😠', confused: '🤨' };
 const MOCHI = {
   laughing: 'laugh along with you 😂, and hold its comments (you are laughing: not talking over you)',
   happy: 'smile with you 😊', surprised: 'look surprised with you 😮', sad: 'look sad with you 😢', neutral: 'keep watching the video',
+  disgusted: 'cringe with you 😬', scared: 'look worried with you 😟', angry: 'look worried, "uh oh" 😟 (it backs off rather than copying anger)',
+  confused: 'look curious 🤔',
 };
 // Each bar = one feature the rules use, with the threshold (change over rest) that matters most for it.
 const BARS = [
@@ -204,6 +206,12 @@ const BARS = [
   ['wide', 'Eyes wide', T.surpriseWide],
   ['squint', 'Eyes squint', T.laughSquint],
   ['frown', 'Frown', T.sadFrown],
+  ['sneer', 'Nose wrinkle (disgust)', T.disgustSneer],
+  ['upperLip', 'Upper lip up (disgust)', T.disgustUpperLip],
+  ['browDown', 'Brows down (angry)', T.angryBrowDown],
+  ['press', 'Lips pressed (angry)', T.angryPress],
+  ['stretch', 'Mouth stretched (scared)', T.fearStretch],
+  ['browAsym', 'One brow up (confused)', T.confusedAsym],
 ];
 $('bars').innerHTML = BARS.map(([k, name]) => `
   <div class="bar"><span>${name}</span>

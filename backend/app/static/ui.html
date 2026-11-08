@@ -718,7 +718,7 @@ function onFeedEvent(ev) {
         line(card, ev.ts, 'EYES', 'emotion', ev.eyeContact ? 'eye contact with Mochi → it smiles back 😊' : `looking at ${where}`);
         break;
       }
-      const face = { laughing: '😂', happy: '😊', surprised: '😮', sad: '😢', neutral: '😐' }[ev.expression] || '';
+      const face = { laughing: '😂', happy: '😊', surprised: '😮', sad: '😢', neutral: '😐', disgusted: '🤢', scared: '😨', angry: '😠', confused: '🤨' }[ev.expression] || '';
       line(card, ev.ts, 'YOU', 'emotion', !ev.present ? 'not in view' : ev.lookingAway ? 'looking away (comments held)' : `${face} ${esc(ev.expression)}`);
       break;
     }
