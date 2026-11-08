@@ -377,11 +377,11 @@ export class Controller {
   private visitComment(target: CommentTarget): CommentSelection {
     const videoId = this.watcher?.currentId;
     const now = Date.now();
-    if (!this.commentsEnabled() || !videoId) return { accepted: false, hint: 'Close buddy settings to read comments.' };
-    if (this.state.bubble || this.speaking) return { accepted: false, retryAfterMs: 500, hint: 'Finishing this reaction…' };
-    if (!commentPosition(target, window.innerWidth, window.innerHeight)) return { accepted: false, hint: 'No room beside comments. Try a wider window.' };
-    if (this.seenComments.has(target.text)) return { accepted: false, hint: 'Already read this one. Try a different comment.' };
-    if (this.seenComments.size >= 100) return { accepted: false, hint: 'Comment limit reached for this Short. Swipe to start fresh.' };
+    if (!this.commentsEnabled() || !videoId) return { accepted: false, hint: "Close my menu and I'll read comments!" };
+    if (this.state.bubble || this.speaking) return { accepted: false, retryAfterMs: 500, hint: "One sec, I'm still talking!" };
+    if (!commentPosition(target, window.innerWidth, window.innerHeight)) return { accepted: false, hint: 'I need a bit more room to sit by the comments!' };
+    if (this.seenComments.has(target.text)) return { accepted: false, hint: 'We read that one! Pick another?' };
+    if (this.seenComments.size >= 100) return { accepted: false, hint: "That's lots of comments! Let's watch the next one." };
     // No wait between comment visits (no cooldown, no reading gap). A bubble still on screen is handled above.
     this.cancelCommentVisit();
     const requestId = newId();

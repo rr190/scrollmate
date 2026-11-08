@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from . import config, mock
 from .emotions import EMOTIONS
 from .character import character_block
+from .safety import comment_safe, kid_safe
 from .feed import feed
 from .journal import journal
 from .tools import maybe_recall
@@ -153,15 +154,8 @@ def safe(text: str) -> bool:
 
 # Comment replies use internet slang ("I'm dead 💀", "killing it", "this never gets old"), so "dead", "kill…"
 # and "old" are allowed here. Real deaths, self-harm, slurs, appearance and protected traits stay blocked.
-_COMMENT_BLOCK = re.compile(
-    r"\b(ugly|fat|skinny|race|racist|black people|white people|gay|religio\w*|disabled|retard\w*|died|death|suicide|"
-    r"cancer|nazi|kys|kill (yo)?ur ?self|kill (him|her|them)sel(f|ves))\b",
-    re.I,
-)
 
 
-def comment_safe(text: str) -> bool:
-    return 3 <= len(text) <= 160 and not _COMMENT_BLOCK.search(text)
 
 
 def trim_words(text: str, limit: int = 15) -> str:
@@ -570,21 +564,16 @@ FEELING_FACE = {
     "scared": "worried", "confused": "curious", "disgusted": "cringe", "angry": "worried",
 }
 FEELING_FALLBACK = {
-    "happy": ["You're smiling! Did that make you happy? 😊", "Ooh, was that a happy one?"],
-    "laughing": ["Hehe, was that super funny? 😄", "You're laughing! Me too!"],
-    "surprised": ["Whoa, did that surprise you too?!", "Wow! Were you surprised? 😮"],
-    "sad": ["Are you okay? 💛 Want a happy one next?", "That felt a bit sad, huh? I'm here."],
-    "scared": ["That was a bit scary, huh? I'm right here. 💛", "Eek! Are you okay?"],
-    "confused": ["Hmm, was that one a bit puzzling? 🤔", "Huh? Did that confuse you too?"],
-    "disgusted": ["Eww, was that yucky? 🤢", "That one was a bit gross, huh?"],
-    "angry": ["Grr, was that annoying? I get it.", "Hmm, did that one bug you?"],
+    "happy": ["Yay, that was a happy one! 😊", "Ooh, that made me smile too. Did it make you smile?"],
+    "laughing": ["Hehe, we're both laughing at that one! 😄", "That was so silly, I can't stop giggling!"],
+    "surprised": ["Whoa, I did NOT see that coming! 😮", "Wow, that surprised me too!"],
+    "sad": ["That felt a bit sad. I'm right here with you. 💛", "Aww. Want to find a happy one next?"],
+    "scared": ["Eek, that was a bit scary! I'm right here. 💛", "Phew, it's okay. We can watch a cosy one next."],
+    "confused": ["Hmm, that one puzzled me too! 🤔", "Huh, that was a tricky one. What do you think happened?"],
+    "disgusted": ["Eww, that looked yucky! 🤢", "Ick! I'd hold my nose for that one."],
+    "angry": ["Grr, that was a bit annoying, huh.", "Hmm, that bugged me too. Let's find a fun one!"],
 }
 # On top of comment_safe: nothing about watching them, their body, health, or scary words for kids.
-_KID_BLOCK = re.compile(
-    r"\b(camera|webcam|watching you|your face|face looks|body|weight|sick|ill|illness|hospital|medicine|doctor|"
-    r"disease|pain|hurt\w*|blood|scream\w*|die|dying|dead|stupid|dumb|crybaby)\b",
-    re.I,
-)
 
 
 def gentle_face(emotion, feeling):
@@ -594,8 +583,6 @@ def gentle_face(emotion, feeling):
     return emotion
 
 
-def kid_safe(text: str) -> bool:
-    return comment_safe(text) and not _KID_BLOCK.search(text)
 
 
 _feeling_turn = 0

@@ -41,7 +41,7 @@ COMMENT_STYLE = """\n\nHow to write the comment the child will see:
 - React to one concrete detail. Don't recap the scene or explain why it is funny.
 - Use ordinary words. Skip assistant introductions, generic praise, motivational slogans and grand life lessons.
 - Don't force a punchline, slang, all caps, a catchphrase or the same opening every time.
-- Warmth can be simple. Don't assume the viewer's feelings or invent personal memories or experiences.
+- Warmth can be simple. Don't guess the child's feelings (only use a feeling when one is given to you), and never invent personal memories or experiences.
 - Persona examples show tone only. Never copy their facts into a different scene or treat them as a script.
 - Keep the required JSON/tool structure. Put only the comment in its text/line field, with no explanation of your writing.
 These style rules never require a comment: keep the existing empty/null response when nothing is worth saying."""
@@ -64,7 +64,7 @@ Each reaction:
 - ONE brief reaction, usually 2-10 words, at most 15. Fragments are welcome. No hashtags. {emoji}
 - Specific: reference a concrete detail from the notes (an event, the outcome, the topic). No generic filler like "wow, nice video".
 - Only use facts in the notes. Never invent events.
-- Allowed angles: a surprising moment, irony, an unexpected outcome, a callback to an earlier Short, a theme across the last
+- Allowed angles: a surprising moment, a funny surprise or silly twist, an unexpected outcome, a callback to an earlier Short, a theme across the last
   three, a light observation about the child's viewing (e.g. skipping), never shaming.
 - Never joke about protected characteristics, tragedies, accidents with injuries, people's appearance or bodies, or
   sensitive personal information. If the Short is about something sad or serious, return no reactions.

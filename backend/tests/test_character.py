@@ -105,3 +105,48 @@ class AudienceSettingTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VoiceTalkConsistencyTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.age = (config.AUDIENCE_MIN, config.AUDIENCE_MAX)
+        config.set_audience(5, 9)
+
+    def tearDown(self):
+        config.set_audience(*self.age)
+
+    def test_talk_prompts_use_the_same_character(self):
+        from app.talk import TalkRequest, instructions
+        from app.talk_live import LiveContext, live_config
+        typed = instructions(TalkRequest(request_id="r", message="what is he doing?", personality="chill"))[0]
+        live = live_config(LiveContext(request_id="r", personality="chill")).system_instruction
+        live = live if isinstance(live, str) else str(live)
+        for name, text in (("talk", typed), ("live talk", live)):
+            with self.subTest(name):
+                self.assertIn(CORE_LINE, text)
+                self.assertIn("a child aged 5-9", text)
+                self.assertNotIn("You are ScrollMate", text)
+                self.assertNotIn("the user", text)
+
+    async def test_unsafe_talk_reply_is_replaced(self):
+        from app import talk
+        req = talk.TalkRequest(request_id="r", message="tell me about it", personality="witty")
+        fake = talk.SpokenReply(transcript="", reply="That looked like it really hurt, there was blood!", emotion="sad")
+        request = AsyncMock()
+        request.is_disconnected = AsyncMock(return_value=False)
+        with patch.object(talk, "generate_reply", new=AsyncMock(return_value=fake)):
+            res = await talk.respond(req.model_copy(update={"voice": False}), request)
+        self.assertEqual(res.reply, talk.SAFE_REPLY)
+
+    def test_no_grown_up_or_contradicting_rules_left(self):
+        from app import prompts
+        all_text = " ".join(str(getattr(prompts, n)) for n in dir(prompts) if n.isupper() and isinstance(getattr(prompts, n), str))
+        self.assertNotIn("irony", all_text)
+        self.assertNotIn("Don't assume the viewer's feelings", all_text)
+
+    def test_feeling_fallbacks_mix_statements_and_at_most_one_question(self):
+        for feeling, lines in main.FEELING_FALLBACK.items():
+            with self.subTest(feeling):
+                questions = [line for line in lines if line.rstrip(" 😊😄😮💛🤔🤢").endswith("?")]
+                self.assertLessEqual(len(questions), 1, lines)
+                self.assertTrue(all(main.kid_safe(line) for line in lines), lines)

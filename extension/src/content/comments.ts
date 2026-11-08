@@ -148,7 +148,7 @@ export class CommentsWatcher {
     this.candidate = eligible;
     this.failedReads = 0;
     this.origin = this.pointer;
-    this.cb.onHint(eligible ? 'Hold still for a second…' : null);
+    this.cb.onHint(eligible ? 'Ooh, this one? Hold on…' : null);
     if (eligible) this.dwell = window.setTimeout(() => this.select(eligible), COMMENT_DWELL_MS);
   };
 
@@ -158,10 +158,10 @@ export class CommentsWatcher {
     const panel = element.closest<HTMLElement>('ytd-comments') ?? element.closest<HTMLElement>('ytd-engagement-panel-section-list-renderer');
     const panelRect = panel && visibleRect(panel, this.pointer);
     const text = normalize(element.innerText);
-    this.readFailure = !rect ? 'Comment text has no visible area.'
-      : !panelRect ? 'The comment panel is not visible yet.'
-      : !text ? 'This comment has no readable text.'
-      : text.length > 1200 ? 'This comment is too long; try a shorter one.' : null;
+    this.readFailure = !rect ? "I can't see those words yet!"
+      : !panelRect ? 'Open the comments and I can read them!'
+      : !text ? "Hmm, there are no words in that one."
+      : text.length > 1200 ? "Whoa, that one's super long! Pick a shorter one?" : null;
     if (!rect || !panelRect || this.readFailure) return null;
     let id = this.ids.get(element);
     if (!id) { id = `comment-${++this.sequence}`; this.ids.set(element, id); }
@@ -174,7 +174,7 @@ export class CommentsWatcher {
     const pointed = commentTextAt(underPointer);
     if (!pointed) {
       this.candidate = null;
-      this.cb.onHint('Move over the comment text to read it.');
+      this.cb.onHint("Point at the words and I'll read it!");
       return;
     }
     if (pointed !== element) {
@@ -186,7 +186,7 @@ export class CommentsWatcher {
     }
     const target = this.read(element);
     if (!target) {
-      this.cb.onHint(this.readFailure ?? 'Comment changed. Hover over its text again.');
+      this.cb.onHint(this.readFailure ?? 'Oops, it moved! Point at the words again.');
       console.debug('[ScrollMate] comment hover visibility:', this.readFailure);
       if (++this.failedReads <= 3)
         this.dwell = window.setTimeout(() => this.select(element), 300);

@@ -6,12 +6,12 @@ import { AnimalCharacter } from './avatars/AnimalCharacter';
 
 /** Which drawing to use for the companion. Both react to the same moods. */
 export const AVATARS: { id: AvatarKind; label: string; hint: string; aspect: number }[] = [
-  { id: 'mochi', label: 'Companio', hint: 'Mochi with a sprout', aspect: 0.91 }, // viewBox 260x236
-  { id: 'scrollmate', label: 'ScrollMate', hint: 'Original, with headphones', aspect: 0.86 }, // viewBox 140x120
-  { id: 'cat', label: 'Miso', hint: 'A playful little cat', aspect: 0.95 },
-  { id: 'bunny', label: 'Clover', hint: 'A soft-hearted bunny', aspect: 0.95 },
-  { id: 'panda', label: 'Bao', hint: 'Your easygoing panda', aspect: 0.95 },
-  { id: 'shiba', label: 'Sunny', hint: 'A cheerful little shiba', aspect: 0.95 },
+  { id: 'mochi', label: 'Companio', hint: 'A round friend with a sprout', aspect: 0.91 }, // viewBox 260x236
+  { id: 'scrollmate', label: 'ScrollMate', hint: 'A buddy with headphones', aspect: 0.86 }, // viewBox 140x120
+  { id: 'cat', label: 'Miso', hint: 'A little cat', aspect: 0.95 },
+  { id: 'bunny', label: 'Clover', hint: 'A little bunny', aspect: 0.95 },
+  { id: 'panda', label: 'Bao', hint: 'A little panda', aspect: 0.95 },
+  { id: 'shiba', label: 'Sunny', hint: 'A little shiba', aspect: 0.95 },
 ];
 
 export function avatarAspect(kind: AvatarKind): number {

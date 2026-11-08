@@ -178,7 +178,7 @@ async function run() {
   reply(latest().requestId); await reset();
   first.style.opacity = '0';
   hover(first); await wait(1100);
-  assert(!ctl.state.commentVisit && ctl.state.commentHint !== 'Hold still for a second…', 'failed visibility checks must explain the failure');
+  assert(!ctl.state.commentVisit && ctl.state.commentHint !== 'Ooh, this one? Hold on…', 'failed visibility checks must explain the failure');
   first.style.opacity = '';
   await wait(400);
   assert(ctl.state.commentVisit, 'a transient visibility failure should retry after the text becomes visible');

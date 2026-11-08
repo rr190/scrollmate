@@ -200,7 +200,7 @@
     <div class="gaze-wrap">
       <div>
         <div class="ec-short" id="ecShort"><div><span id="ecShortTitle">Short 1 of 5</span><small id="ecShortSub"></small></div><div class="paused">⏸</div></div>
-        <div class="ec-bubble" id="ecBubble">🍡 Mochi: Look at a big button until its ring fills.</div>
+        <div class="ec-bubble" id="ecBubble">🍡 Buddy: Look at a big button until its ring fills.</div>
         <div class="row">
           <button id="ecStart" disabled>Start Eye Control</button>
           <label class="k" style="display:flex;align-items:center;gap:6px">Look time
@@ -657,9 +657,9 @@ function ecChoose(target, via) {
   ec.target = null; ec.lostAt = null;
   btn.classList.add('chosen');
   setTimeout(() => btn.classList.remove('chosen'), 900);
-  if (target === 'next') { ec.index++; ec.paused = false; $('ecBubble').textContent = '🍡 Mochi: Ooh, a new one! 👉'; }
-  else if (target === 'pause') { ec.paused = !ec.paused; $('ecBubble').textContent = ec.paused ? '🍡 Mochi: Paused! Take your time 😊' : '🍡 Mochi: And we\'re back! ▶'; }
-  else $('ecBubble').textContent = `🍡 Mochi: ${SHORTS[ec.index % SHORTS.length].line}`;
+  if (target === 'next') { ec.index++; ec.paused = false; $('ecBubble').textContent = '🍡 Buddy: Ooh, a new one! 👉'; }
+  else if (target === 'pause') { ec.paused = !ec.paused; $('ecBubble').textContent = ec.paused ? '🍡 Buddy: Paused! Take your time 😊' : '🍡 Buddy: And we\'re back! ▶'; }
+  else $('ecBubble').textContent = `🍡 Buddy: ${SHORTS[ec.index % SHORTS.length].line}`;
   ecShowShort();
   ecRender(0);
   const how = via === 'blink' ? 'long blink' : via === 'click' ? 'clicked' : `looked ${(+$('ecDwell').value / 1000).toFixed(1)} s`;

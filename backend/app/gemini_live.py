@@ -83,7 +83,7 @@ def _tool():
         function_declarations=[
             types.FunctionDeclaration(
                 name="observe",
-                description="Report what you see in this frame and how ScrollMate reacts.",
+                description="Report what you see in this frame and how you, the buddy, react.",
                 parameters=S(type=T.OBJECT, properties=props, required=required),
             )
         ]
