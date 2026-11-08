@@ -1015,7 +1015,10 @@ export class Controller {
       if (!this.isCurrent(ctx)) return;
       if (typeof res?.maxFrames === 'number' && res.maxFrames > 0) ctx.maxFrames = res.maxFrames;
       if (!res || res.error) {
-        console.warn(LOG, 'reel observation unavailable:', res?.error ?? 'empty response');
+        // The backend answered but its vision model missed this frame: handled by retrying, so not an extension error.
+        // Unreachable backends and HTTP failures stay warnings, because they need fixing.
+        const handled = !!res?.error && !res.error.includes('HTTP') && !/fetch|abort/i.test(res.error);
+        (handled ? console.info : console.warn)(LOG, 'reel observation unavailable:', res?.error ?? 'empty response');
         this.set({ note: 'Reel analysis unavailable. Retrying a later frame.' });
         if (res?.final || index >= ctx.maxFrames) ctx.done = true;
         else ctx.nextAt = Math.max(t + 3, video.currentTime + 1.5);

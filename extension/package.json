@@ -21,7 +21,8 @@
     "build:face-lib": "esbuild src/shared/faceSignals.ts --format=esm --outfile=../backend/app/static/faceSignals.js --log-level=warning",
     "test:stress:browser": "node scripts/test-comments-browser.mjs tests/stress.browser.ts 150000",
     "test:tabs": "tsx --test tests/background-tabs.test.ts",
-    "test:timing": "tsx --test tests/timing.test.ts"
+    "test:timing": "tsx --test tests/timing.test.ts",
+    "test:face:browser": "node scripts/test-comments-browser.mjs tests/faceMirror.browser.ts 60000"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "1.1.1",
