@@ -77,11 +77,17 @@ To use a backend somewhere other than `http://localhost:8000`, build with `VITE_
 
 Click the floating character to expand a lavender ring around that same character. Choose **Personality** (Witty / Hype / Chill), **Reactions** (Rare / Balanced / Chatty), or one of six avatars. Tap the character in the centre to turn the buddy on or off; the ring closes automatically. Click outside, press Escape or use the small close button to close just the ring.
 
+The ring is at most 320 px wide (previously 420 px); its calibration action sits above the character so it does not cover the avatar choices.
+
 The buddy has one power switch. Video reactions, comment reactions, voice, camera and eye tracking stay enabled together while it is on. Turning it off stops speech, camera, gaze and pending reactions. Avatar and personality preferences are saved. There is no separate settings card, feature switch panel or three-step power sequence.
 
 Camera access still needs browser permission. **Set up eyes** inside the ring opens the one-time gaze calibration. Camera frames are processed locally. Voice speaks only at quiet moments. Browser screen-capture permission requires a toolbar click; canvas/text fallbacks remain available. Near a screen edge, the buddy temporarily moves inward to fit its ring; closing restores its saved position.
 
 Eye tracking assists timing without becoming a permanent mute switch. Uncalibrated gaze is ignored. An off-screen gaze estimate cannot mark a visible, forward-facing viewer as absent. Gaze alone may defer a reel comment for two seconds, then allow a silent bubble when the other timing rules permit it. Confirmed absence, laughter and deliberately hovering a comment still defer reel comments. Rare still filters lower-importance reactions; choose Balanced or Chatty for more frequent lines.
+
+Gaze points guide the buddy's eyes and movement toward the comments. They expire after 1.5 seconds without fresh camera data; neither a stale position nor its attention zone should steer movement. The calibration model is saved locally, while raw movement coordinates stay transient. Only coarse attention-zone changes reach the optional backend debug feed. Use **Set up eyes** on the monitor and camera position you will actually use; recalibrate if the estimate drifts. Gaze alone is not evidence that someone liked a character or video.
+
+If the vision model understands a reel but produces only a facial expression, the backend gives the text model one comment check using those existing observations. This adds no image upload and has a three-second deadline; it can still return nothing. Rare waits for the final observation and retains its importance threshold. Failed vision observations now return an explicit error, and the extension retries a later frame within its existing per-reel frame budget. Waking on an already-open reel also starts its title/context pipeline.
 
 Verification: `npm.cmd run test:menu` checks master settings, and `npm.cmd run test:menu:browser` checks interaction and alignment at 1440 x 1000, 800 x 600 and 390 x 844, including reduced motion and every viewport corner. Browser checks stub camera/model requests; screenshots are saved in `.artifacts/orbit-menu-*.png`.
 

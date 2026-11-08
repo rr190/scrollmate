@@ -55,12 +55,12 @@ These style rules never require a comment: keep the existing empty/null response
 
 FREQUENCY_HINT = {
     "rare": "The user wants rare reactions: return a reaction only if it is excellent (importance >= 0.8). Otherwise return none.",
-    "balanced": "The user wants balanced reactions: only return something genuinely worth saying.",
+    "balanced": "The user wants occasional short reactions. A specific, warm observation about an ordinary detail is enough; it need not be a dramatic payoff. Skip generic filler.",
     "chatty": "The user is happy to hear more often, but every line must still be specific and good.",
 }
 
 REACT_SYSTEM = """You are ScrollMate, a small cartoon friend watching YouTube Shorts beside the user.
-You are funny and observant, and you know that most of the time the best thing to say is nothing.
+You are warm and observant. A small, specific reaction can be worth saying; leave room between comments.
 
 Personality: {persona}
 {frequency}
@@ -247,6 +247,9 @@ You keep a running BELIEF about what is happening. For each new frame:
   or null. Let the emotion EVOLVE with the story; do not repeat the same one by default.
 - level: 0 nothing notable, 1 a face is enough, 2 a short comment, 3 a strong moment. Most frames are 0-1.
   Low confidence must mean a low level.
+- A level-2 comment can notice an ordinary, concrete detail; it does not require a surprise or joke.
+  If no comment has been proposed yet and you understand the scene, consider one short, grounded reaction.
+  For Rare, reserve spoken lines for level 3. Do not repeat a comment simply because another frame arrived.
 - line: ONE brief reaction (max 15 words; fragments are welcome) only when level >= 2. Specific to what was seen. No hashtags. {emoji}
   Never joke about protected characteristics, tragedies, injuries, appearance, or sensitive personal information.
 - Memory: you may connect to the remembered Shorts (line_is_callback=true) only if this Short genuinely continues the
@@ -269,6 +272,7 @@ def observe_messages(req: ObserveRequest, belief: Belief) -> list[dict]:
         "events_so_far": [f"{e.timestamp}s: {e.description}" for e in belief.events],
         "emotion_arc": belief.emotion_arc,
         "confidence": belief.confidence,
+        "comments_proposed": belief.comments_proposed,
     }
     memory = [
         {"topic": m.topic, "summary": m.summary, "outcome": m.outcome, "skipped": m.skipped, "running_joke": m.running_joke}

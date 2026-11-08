@@ -238,7 +238,7 @@ export class Controller {
     if (!prev.enabled && next.enabled && !next.demo) {
       this.set({ note: 'ScrollMate is watching. Reactions appear only at natural pauses.' });
       // Start fresh on the Short already on screen.
-      if (this.watcher?.currentId) this.ctx = this.newCtx(this.watcher.currentId);
+      if (this.watcher?.currentId) this.onShortChange({ videoId: this.watcher.currentId, startedAt: Date.now() }, null);
     }
     this.tick();
   }
@@ -416,7 +416,8 @@ export class Controller {
   }
 
   private onGaze(fx: number, fy: number) {
-    if (!this.state.settings.eyeTrack || !this.state.settings.userCam || !this.state.gaze.calibrated) return;
+    if (!this.state.settings.enabled || !this.state.settings.eyeTrack || !this.state.settings.userCam ||
+        !this.state.gaze.calibrated || !Number.isFinite(fx) || !Number.isFinite(fy)) return;
     const now = Date.now();
     this.lastGazeAt = now;
     const scr = screen as Screen & { availLeft?: number };
@@ -629,6 +630,8 @@ export class Controller {
 
   private tick() {
     const now = Date.now();
+    // Never steer the buddy using a point left behind by a stopped camera or lost face.
+    if ((this.gazePoint || this.state.gaze.zone || this.state.gaze.look) && !this.gazeActive()) this.clearGaze();
     this.tickComment(now);
     if (this.demo) {
       this.demo.tick(now);
@@ -767,6 +770,7 @@ export class Controller {
       void this.swipeStep(ctx, title, channel);
     };
     window.setTimeout(() => readTitle(0), 150);
+    if (this.watcher?.video && !this.watcher.video.paused) this.onPlayback('play', this.watcher.video);
     this.tick();
   }
 
@@ -929,7 +933,14 @@ export class Controller {
         frequency: this.state.settings.frequency,
       });
       if (!this.isCurrent(ctx)) return;
-      if (res?.error) this.set({ note: `Backend unreachable or failed (${res.error.slice(0, 60)}). Staying quiet.` });
+      if (typeof res?.maxFrames === 'number' && res.maxFrames > 0) ctx.maxFrames = res.maxFrames;
+      if (!res || res.error) {
+        console.warn(LOG, 'reel observation unavailable:', res?.error ?? 'empty response');
+        this.set({ note: 'Reel analysis unavailable. Retrying a later frame.' });
+        if (res?.final || index >= ctx.maxFrames) ctx.done = true;
+        else ctx.nextAt = Math.max(t + 3, video.currentTime + 1.5);
+        return;
+      }
       if (res?.emotion && res.level >= 1) this.showFace(ctx, res.emotion, res.level >= 3 ? 1 : 0.8, `frame ${index}`, t);
       // No "avoid" time: the line is a reaction to a moment that just happened, so showing it now is the point.
       // (Level 2-3 lines are marked 'now' by the backend; the timing engine still applies the reading gap.)
@@ -938,7 +949,6 @@ export class Controller {
       const now = video.currentTime;
       let next = res?.nextCaptureAt ?? null;
       if (next !== null) next = Math.max(next, t + MIN_FRAME_GAP_S, now + 0.3);
-      if (typeof res?.maxFrames === 'number' && res.maxFrames > 0) ctx.maxFrames = res.maxFrames;
       if (res?.final || next === null || index >= ctx.maxFrames || (duration > 0 && next > duration - 0.5)) ctx.done = true;
       else ctx.nextAt = next;
       this.emit({

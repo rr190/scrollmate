@@ -72,13 +72,13 @@ export function RingMenu({ ctl, state, onClose }: { ctl: Controller; state: UiSt
 
       <div className="sm-orbit-centre">
         <span className="sm-orbit-power-label">{st.enabled ? 'Tap to turn off' : 'Tap to turn on'}</span>
-        {st.enabled && <button type="button" className="sm-orbit-calibrate" onClick={() => ctl.openGazeCalibration()}
-          title="Eye tracking needs camera permission and a one-time calibration">
-          {state.gaze.calibrated ? 'Recalibrate eyes' : 'Set up eyes'}
-        </button>}
-        {st.enabled && state.camera === 'needs_permission' && <span className="sm-orbit-camera-note" role="status">Allow camera in setup tab</span>}
-        {st.enabled && state.camera === 'error' && <span className="sm-orbit-camera-note" role="status">Camera unavailable</span>}
       </div>
+      {st.enabled && <button type="button" className="sm-orbit-calibrate" onClick={() => ctl.openGazeCalibration()}
+        title="Eye tracking needs camera permission and a one-time calibration">
+        {state.gaze.calibrated ? 'Recalibrate eyes' : 'Set up eyes'}
+      </button>}
+      {st.enabled && state.camera === 'needs_permission' && <span className="sm-orbit-camera-note" role="status">Allow camera in setup tab</span>}
+      {st.enabled && state.camera === 'error' && <span className="sm-orbit-camera-note" role="status">Camera unavailable</span>}
       <button type="button" className="sm-orbit-close" aria-label="Close ring" title="Close ring" onClick={onClose}>{'\u00d7'}</button>
     </div>
   </div>;

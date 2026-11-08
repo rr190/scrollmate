@@ -730,7 +730,45 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
         out.belief = b
         out.record = _record(b)
     else:
+        out.error = "Vision model unavailable; retrying a later frame."
         out.final = req.frame_index >= max_frames
+        out.next_capture_at = None if out.final else req.frame_time + 3
+
+    threshold = {"rare": 0.75, "balanced": 0.55, "chatty": 0.4}[req.frequency]
+    # A line the selected frequency will discard is not a successfully proposed comment.
+    out.reactions = [candidate for candidate in out.reactions if candidate.importance >= threshold]
+
+    # Understanding a scene and finding a conversational line are different jobs.
+    # Give the text model one bounded opportunity when vision understood the reel but stayed face-only.
+    if (
+        raw is not None and not out.reactions and b.comments_proposed == 0 and not b.comment_checked
+        and req.frame and b.confidence >= 0.75 and b.topic != "unknown"
+        and (b.frames_seen >= 2 or out.final) and (req.frequency != "rare" or out.final)
+        and not await request.is_disconnected()
+    ):
+        b.comment_checked = True  # set before awaiting so overlapping requests cannot duplicate the check
+        context = [m for m in req.memory if m.video_id != req.video_id][-2:] + [_record(b, req.frame_time)]
+        try:
+            response, comment_path = await asyncio.wait_for(
+                _react(ReactRequest(memory=context, current_video_id=req.video_id,
+                                    personality=req.personality, frequency=req.frequency), request),
+                timeout=3,
+            )
+            for candidate in response.reactions:
+                if candidate.importance < threshold:
+                    continue
+                out.reactions = [candidate.model_copy(update={
+                    "preferred_timing": "now", "requires_quiet_moment": False,
+                    "expires_after_seconds": 60 if candidate.is_callback else 8,
+                })]
+                out.level = max(out.level, 3 if candidate.importance >= 0.9 else 2)
+                break
+            feed.publish("status", videoId=req.video_id,
+                         note=f"reel comment check: {'line ready' if out.reactions else 'nothing specific to add'} ({comment_path})")
+        except Exception as exc:
+            log.warning("reel comment check %s failed: %s", req.video_id, type(exc).__name__)
+            feed.publish("status", videoId=req.video_id, note="reel comment check unavailable; keeping the visual reaction")
+    b.comments_proposed += len(out.reactions)
 
     feed.publish(
         "observe_result",

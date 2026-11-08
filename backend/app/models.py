@@ -250,6 +250,8 @@ class Belief(Camel):
     confidence: float = 0.0  # model estimate, not calibrated
     frames_seen: int = 0
     version: int = 0
+    comments_proposed: int = 0
+    comment_checked: bool = False  # one text-only comment check per Short, RAM only
 
 
 class ObserveRequest(Camel):
@@ -294,5 +296,6 @@ class ObserveResponse(Camel):
     reactions: list[ReactionCandidate] = Field(default_factory=list)
     next_capture_at: float | None = None
     final: bool = False
+    error: str | None = None
     max_frames: int = 3  # effective limit for this Short (from the /ui setting)
     record: MemoryItem  # what goes into the 3-Short memory if this Short ends now

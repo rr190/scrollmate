@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { Avatar, avatarAspect } from './Avatar';
 import type { Controller, Position } from './controller';
 import { RingMenu } from './RingMenu';
@@ -152,7 +152,7 @@ export function App({ ctl }: { ctl: Controller }) {
   const homeX = destination?.x ?? clampX(roam?.x ?? pos.fx * vp.w);
   const homeY = destination?.y ?? clampY(roam?.y ?? pos.fy * vp.h);
   const height = Math.round(size * avatarAspect(s.settings.avatar));
-  const ringSize = Math.max(size * 2, Math.min(420, vp.w - 24, vp.h - 24));
+  const ringSize = Math.min(320, vp.w - 24, vp.h - 24);
   const insetX = (ringSize - size) / 2;
   const insetY = (ringSize - height) / 2;
   // Make room for the ring near an edge without changing the saved home position.
@@ -215,7 +215,7 @@ export function App({ ctl }: { ctl: Controller }) {
           ...(roamingWalk && roam ? { transitionDuration: `${roam.ms}ms`, transitionTimingFunction: roam.stroll ? 'linear' : 'cubic-bezier(0.45, 0.05, 0.55, 0.95)' } : {}),
         }}
       >
-        {open && <div className="sm-ring-anchor" style={{ left: -insetX, top: -insetY, width: ringSize, height: ringSize }}>
+        {open && <div className="sm-ring-anchor" style={{ left: -insetX, top: -insetY, width: ringSize, height: ringSize, '--sm-buddy-height': `${height}px` } as CSSProperties}>
           <RingMenu ctl={ctl} state={s} onClose={() => {
             setOpen(false); companion.current?.querySelector<HTMLButtonElement>('.sm-char-btn')?.focus({ preventScroll: true });
           }} />

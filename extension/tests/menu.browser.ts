@@ -15,6 +15,7 @@ const messages: BgRequest[] = [];
 const listeners: ((message: TabMessage) => unknown)[] = [];
 let calibrated = false;
 let reelReaction = false;
+let failObservation = true;
 const notify = (message: TabMessage) => listeners.forEach((listener) => listener(message));
 Object.defineProperty(window, 'chrome', { value: {
   storage: { local: {
@@ -29,6 +30,11 @@ Object.defineProperty(window, 'chrome', { value: {
       if (message.type === 'CAMERA_START') setTimeout(() => notify({ type: 'CAMERA_STATUS', state: 'on' }), 20);
       if (message.type === 'CAPTURE_FRAME') { reply({ ok: true, data: 'stubbed-local-frame' }); return; }
       if (message.type === 'OBSERVE' && reelReaction) {
+        if (failObservation) {
+          failObservation = false;
+          reply({ error: 'Temporary model failure', emotion: null, reactions: [], nextCaptureAt: null, final: false });
+          return;
+        }
         reply({ emotion: 'impressed', level: 2, change: 'major', final: true, nextCaptureAt: null, reactions: [{
           text: 'That turned out beautifully.', importance: 0.85, targetVideoId: message.videoId,
           preferredTiming: 'now', requiresQuietMoment: false, expiresAfterSeconds: 8, isCallback: false,
@@ -62,6 +68,7 @@ function fits() {
   const buddy = button('.sm-char-btn').getBoundingClientRect();
   assert(ring.left >= 0 && ring.right <= innerWidth + 1, 'ring must fit horizontally');
   assert(ring.top >= 0 && ring.bottom <= innerHeight + 1, 'ring must fit vertically');
+  assert(ring.width <= 321, 'ring should remain compact at no more than 320px');
   assert(Math.abs(ring.left + ring.width / 2 - buddy.left - buddy.width / 2) < 1, 'ring must surround the real buddy horizontally');
   assert(Math.abs(ring.top + ring.height / 2 - buddy.top - buddy.height / 2) < 1, 'ring must surround the real buddy vertically');
   assert(getComputedStyle(shadow.querySelector('.sm-orbit-menu')!).backgroundColor === 'rgba(0, 0, 0, 0)', 'ring must have no rectangular card background');
@@ -130,16 +137,21 @@ async function run() {
   reelReaction = true;
   const video = document.querySelector('video')!;
   for (const [key, value] of Object.entries({ currentTime: 5, duration: 30, paused: false, ended: false })) {
-    Object.defineProperty(video, key, { value, configurable: true });
+    Object.defineProperty(video, key, { value, configurable: true, writable: true });
   }
   const gazeTimer = window.setInterval(gaze, 200);
   video.dispatchEvent(new Event('timeupdate')); await wait(500);
   assert(messages.some((message) => message.type === 'OBSERVE'), `playing reel must reach frame observation (snapshot=${JSON.stringify(ctl.snapshot())}, last messages=${messages.slice(-8).map(message => message.type).join(',')})`);
+  video.currentTime = 9;
+  video.dispatchEvent(new Event('timeupdate')); await wait(500);
+  assert(messages.filter((message) => message.type === 'OBSERVE').length >= 2, 'a failed observation must retry on the same reel');
   assert(!ctl.state.bubble, 'gaze briefly defers the reel comment');
   await wait(2000); window.clearInterval(gazeTimer);
   assert(ctl.state.bubble?.text === 'That turned out beautifully.', 'reel comment must appear despite continuous drifting gaze');
   assert(ctl.state.mood === 'amused', 'reel delivery must update the buddy expression');
   ctl.hideBubble();
+  await wait(1700);
+  assert(!ctl.gazePoint && !ctl.state.gaze.zone && !ctl.state.gaze.look, 'stale gaze points must stop steering the buddy');
   await tapBuddy(); fits();
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await wait(50);
   assert(!shadow.querySelector('.sm-orbit-menu'), 'Escape must close ring'); checkFeatures(true);
