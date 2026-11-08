@@ -112,6 +112,7 @@ export interface CommentReactResponse {
   error?: string;
 }
 export interface SwipeResponse {
+  demoMode?: boolean;
   momentType: string;
   emotion: Emotion | null;
   level: number;
@@ -119,6 +120,7 @@ export interface SwipeResponse {
   error?: string;
 }
 export interface ObserveResponse {
+  demoMode?: boolean;
   emotion: Emotion | null;
   level: number;
   change: 'none' | 'minor' | 'major';

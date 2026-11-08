@@ -147,6 +147,7 @@ def current_models() -> dict:
         "race_text": RACE_TEXT,
         "frames": FRAMES,
         "audience": f"{AUDIENCE_MIN}-{AUDIENCE_MAX}",
+        "demo_mode": DEMO_MODE,
     }
 
 
@@ -167,6 +168,15 @@ def frames_for(duration: float) -> int:
 def set_frames(value: str) -> None:
     global FRAMES
     FRAMES = value
+
+
+# Demo mode (for presenting): every Short gets a comment, feelings are noticed sooner, "looked away" doesn't hold lines.
+DEMO_MODE = _bool("SCROLLMATE_DEMO_MODE", False)
+
+
+def set_demo(on: bool) -> None:
+    global DEMO_MODE
+    DEMO_MODE = on
 
 
 def set_audience(lo: int, hi: int) -> None:

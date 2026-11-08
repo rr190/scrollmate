@@ -17,6 +17,7 @@
     "test:roam": "tsx --test tests/roam.test.ts",
     "test:roam:browser": "node scripts/test-comments-browser.mjs tests/roam.browser.ts 110000",
     "test:power:browser": "node scripts/test-comments-browser.mjs tests/power.browser.ts 20000",
+    "test:comments-open:browser": "node scripts/test-comments-browser.mjs tests/commentsOpen.browser.ts 20000",
     "test:face": "tsx --test tests/faceSignals.test.ts tests/feelings.test.ts",
     "build:face-lib": "esbuild src/shared/faceSignals.ts --format=esm --outfile=../backend/app/static/faceSignals.js --log-level=warning",
     "test:stress:browser": "node scripts/test-comments-browser.mjs tests/stress.browser.ts 150000",

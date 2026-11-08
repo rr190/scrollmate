@@ -150,3 +150,46 @@ class VoiceTalkConsistencyTests(unittest.IsolatedAsyncioTestCase):
                 questions = [line for line in lines if line.rstrip(" 😊😄😮💛🤔🤢").endswith("?")]
                 self.assertLessEqual(len(questions), 1, lines)
                 self.assertTrue(all(main.kid_safe(line) for line in lines), lines)
+
+
+class DemoModeTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        main._hits.clear()
+        main._beliefs.clear()
+        main.journal.clear()
+        self.was = config.DEMO_MODE
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test")
+
+    async def asyncTearDown(self):
+        config.set_demo(self.was)
+        await self.client.aclose()
+
+    async def observe_face_only(self, demo: bool):
+        from app.models import LLMObserve
+        config.set_demo(demo)
+        obs = LLMObserve(seen_now="a puppy naps", topic="puppy", happening="a puppy naps on a blanket", expected_next="",
+                         moment_type="other", mood="wholesome", themes=[], confidence=0.9, change="major", emotion="love",
+                         level=1, line=None, next_look_at=5)
+        nothing = AsyncMock(return_value=(main.ReactResponse(reactions=[]), "stub"))
+        with patch.object(main.config, "MOCK", False), patch.object(main, "_vision_call", new=AsyncMock(return_value=(obs, "stub"))), \
+                patch.object(main, "_react", nothing):
+            return (await self.client.post("/scrollmate/observe", json=dict(
+                videoId=f"p-{demo}", frame="", frameTime=1, duration=10, title="sleepy puppy", frequency="rare"))).json()
+
+    async def test_demo_mode_guarantees_a_comment_and_tells_the_extension(self):
+        on = await self.observe_face_only(True)
+        self.assertTrue(on["demoMode"])
+        self.assertEqual(len(on["reactions"]), 1)
+        self.assertTrue(main.kid_safe(on["reactions"][0]["text"]))
+        self.assertGreaterEqual(on["reactions"][0]["importance"], 0.85)
+
+    async def test_without_demo_mode_a_face_only_frame_stays_quiet(self):
+        off = await self.observe_face_only(False)
+        self.assertFalse(off["demoMode"])
+        self.assertEqual(off["reactions"], [])
+
+    async def test_demo_switch_in_settings(self):
+        with patch.object(main.live, "reset", new=AsyncMock()), patch.object(main.config, "MOCK", True):
+            await self.client.post("/scrollmate/settings", json={"demo_mode": True})
+        self.assertTrue(config.DEMO_MODE)
+        self.assertTrue((await self.client.get("/scrollmate/settings")).json()["current"]["demo_mode"])

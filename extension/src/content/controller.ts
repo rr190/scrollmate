@@ -20,7 +20,7 @@ import {
   type TalkContext,
 } from '../shared/messages';
 import { predictMoment } from '../shared/moments';
-import { FeelingNoticer } from '../shared/feelings';
+import { FeelingNoticer, MIRROR_POP } from '../shared/feelings';
 import type { UserSignal } from '../shared/faceSignals';
 import { CueTrack, type Emotion, type EmotionCue } from '../shared/emotions';
 import { TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
@@ -55,6 +55,8 @@ export interface UiState {
   commentVisit: (CommentTarget & { requestId: string; phase: 'running' | 'reading' | 'reacting'; emotion: Emotion | null }) | null;
   camera: CameraState; // webcam status (opt-in)
   user: UserSignal | null; // latest on-device face signal
+  /** A short "I see you!" pop under the buddy when it mirrors the child's face (e.g. "😂 you're laughing!"). */
+  mirrorPop: { id: number; text: string } | null;
 }
 
 interface ShortCtx {
@@ -114,6 +116,7 @@ export class Controller {
     commentVisit: null,
     camera: 'off',
     user: null,
+    mirrorPop: null,
   };
   engine = new TimingEngine({ frequency: 'balanced', voiceEnabled: false });
   private listeners = new Set<() => void>();
@@ -339,6 +342,45 @@ export class Controller {
     if (paused) { this.cancelCommentVisit(); this.comments?.reset(); }
   }
 
+  // ---------- comments open: the buddy reads them by itself if the child doesn't point at one ----------
+  private commentsOpen = false; // the child opened the comment panel (seen going from closed to open)
+  private commentsSeenClosed = false;
+  private commentsOpenSince = 0;
+  private lastCommentBusyAt = 0;
+  private lastOpenCheckAt = 0;
+  private autoReads = new Map<string, number>(); // per Short
+  private static readonly AUTO_READ_AFTER_MS = 2_500;
+  private static readonly AUTO_READS_PER_SHORT = 3;
+
+  private tickCommentsOpen(videoId: string | null, now: number) {
+    if (this.env !== 'youtube' || !this.comments) return;
+    if (now - this.lastOpenCheckAt >= 500) { // the DOM check is cheap but not free
+      this.lastOpenCheckAt = now;
+      const visible = this.comments.discussionContext().commentsOpen; // the page's panel, not our on/off state
+      if (!visible) {
+        this.commentsSeenClosed = true;
+        this.commentsOpen = false;
+      } else if (!this.commentsOpen && this.commentsSeenClosed) {
+        // a deliberate open (closed -> open), not a page that happened to load with comments showing
+        this.commentsOpen = true;
+        this.commentsOpenSince = now;
+      }
+    }
+    if (this.state.commentVisit || this.commentAttempt || this.state.commentHint) this.lastCommentBusyAt = now;
+    if (!this.commentsOpen || !this.commentsEnabled() || !videoId || this.state.bubble || this.speaking) return;
+    const done = this.autoReads.get(videoId) ?? 0;
+    if (done >= Controller.AUTO_READS_PER_SHORT) return;
+    const idleSince = Math.max(this.commentsOpenSince, this.lastCommentBusyAt);
+    if (now - idleSince < Controller.AUTO_READ_AFTER_MS) return;
+    if (this.comments.autoSelect((text) => this.seenComments.has(text))) {
+      this.autoReads.set(videoId, done + 1);
+      this.lastCommentBusyAt = now;
+      console.log(LOG, 'comments open: reading one by myself');
+    } else {
+      this.lastCommentBusyAt = now; // nothing new to read right now: try again in a bit
+    }
+  }
+
   private commentsEnabled() {
     return this.env === 'youtube' && this.state.settings.enabled && this.state.settings.commentReactions &&
       !this.state.settings.demo && !this.commentsPaused && !!this.watcher?.currentId;
@@ -462,7 +504,7 @@ export class Controller {
   private userFlags(): { userAway: boolean; userLaughing: boolean } {
     const u = this.state.settings.userCam && this.state.camera === 'on' ? this.state.user : null;
     return {
-      userAway: !!u && (u.lookingAway || !u.present),
+      userAway: !this.demoMode && !!u && (u.lookingAway || !u.present),
       userLaughing: !!u && u.expression === 'laughing',
     };
   }
@@ -501,7 +543,8 @@ export class Controller {
       const u = this.state.user;
       const current = this.demo ? this.demo.short.videoId : this.watcher?.currentId;
       // still a good moment? same Short, nothing else on screen, child still here
-      if (epoch !== this.epoch || !res?.line || current !== videoId || this.state.bubble || this.speaking || this.state.commentVisit || !u?.present || u.lookingAway) return;
+      const blocked = (this.state.bubble && !this.demoMode) || this.speaking || this.state.commentVisit;
+      if (epoch !== this.epoch || !res?.line || current !== videoId || blocked || !u?.present || u.lookingAway) return;
       if (res.emotion) this.cues.fireNow(videoId, res.emotion, 0.8, this.snapshot().currentTime, now);
       this.deliver({
         candidate: {
@@ -530,7 +573,32 @@ export class Controller {
 
   /** A reel line that carried a feeling counts as noticing it (no separate "noticed" line on this Short). */
   private noteBlended(videoId: string, feeling: UserSignal['expression'] | undefined, lines: number) {
-    if (feeling && lines > 0) this.feelings.markNoticed(videoId, feeling, Date.now());
+    if (feeling && lines > 0 && !this.demoMode) this.feelings.markNoticed(videoId, feeling, Date.now());
+  }
+
+  // ---------- demo mode (set in /ui): reliable for presenting ----------
+  private demoMode = false;
+
+  private setDemoMode(on: boolean | undefined) {
+    if (typeof on !== 'boolean' || on === this.demoMode) return;
+    this.demoMode = on;
+    this.feelings.demo = on;
+    console.log(LOG, on ? 'demo mode on: guaranteed comments, faster feelings, no "looked away" holds' : 'demo mode off');
+  }
+
+  // ---------- "I see you!" pop: makes the face reading visible ----------
+  private popTimer: number | undefined;
+  private lastPopAt = 0;
+  private popSeq = 0;
+
+  private showMirrorPop(expression: UserSignal['expression']) {
+    const text = MIRROR_POP[expression];
+    const now = Date.now();
+    if (!text || now - this.lastPopAt < 2_500) return;
+    this.lastPopAt = now;
+    window.clearTimeout(this.popTimer);
+    this.set({ mirrorPop: { id: ++this.popSeq, text } });
+    this.popTimer = window.setTimeout(() => this.set({ mirrorPop: null }), 1_800);
   }
 
   private onUserSignal(sig: UserSignal) {
@@ -543,9 +611,12 @@ export class Controller {
     // Mirror the viewer: laugh along, look surprised with them (a face, never a bubble).
     const mirror = USER_TO_EMOTION[sig.expression];
     const videoId = this.demo ? this.demo.short.videoId : this.watcher?.currentId;
-    if (mirror && videoId && sig.expression !== prev?.expression && !this.state.bubble) {
-      this.cues.fireNow(videoId, mirror, Math.max(0.6, sig.strength), this.snapshot().currentTime, Date.now());
-      console.log(LOG, 'mirroring you:', sig.expression);
+    if (mirror && videoId && sig.expression !== prev?.expression && sig.present && !sig.lookingAway) {
+      this.showMirrorPop(sig.expression); // visible proof the face reading works
+      if (!this.state.bubble) {
+        this.cues.fireNow(videoId, mirror, Math.max(0.6, sig.strength), this.snapshot().currentTime, Date.now());
+        console.log(LOG, 'mirroring you:', sig.expression);
+      }
     }
     this.tick();
   }
@@ -690,6 +761,7 @@ export class Controller {
       commentRequestId: this.commentAttempt?.requestId ?? null,
       commentReady: this.state.commentVisit?.phase !== 'running',
       readingComments: !!this.commentAttempt || !!this.state.commentHint,
+      commentsOpen: this.commentsOpen && this.commentsEnabled(),
       conversationBusy: this.talkBusy(),
       bubbleVisible: !!this.state.bubble || this.speaking,
       ...this.userFlags(),
@@ -701,6 +773,7 @@ export class Controller {
     const now = Date.now();
     if (this.talkTurnId && now >= this.nextTalkContextAt) this.syncTalkContext();
     this.tickComment(now);
+    this.tickCommentsOpen(this.demo ? null : this.watcher?.currentId ?? null, now);
     if (this.demo) {
       this.demo.tick(now);
       this.set({ demo: this.demo.view(now) });
@@ -865,6 +938,7 @@ export class Controller {
         personality: this.state.settings.personality,
         frequency: this.state.settings.frequency,
       });
+      this.setDemoMode(res?.demoMode);
       // Frames are more trustworthy than the title: never overwrite a face from frame analysis.
       if (!this.isCurrent(ctx) || ctx.frameCount > 0 || !res?.emotion) return;
       if (res.emotion !== rule.emotion) this.showFace(ctx, res.emotion, 0.6, 'title AI');
@@ -1013,6 +1087,7 @@ export class Controller {
         viewerFeeling: feeling,
       });
       if (!this.isCurrent(ctx)) return;
+      this.setDemoMode(res?.demoMode);
       if (typeof res?.maxFrames === 'number' && res.maxFrames > 0) ctx.maxFrames = res.maxFrames;
       if (!res || res.error) {
         // The backend answered but its vision model missed this frame: handled by retrying, so not an extension error.

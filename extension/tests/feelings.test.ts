@@ -69,3 +69,20 @@ test('a reel comment that already blended the feeling counts as this Short\'s no
   assert.equal(hold(n, 10_000, 60_000, { videoId: 'v2', expression: 'happy' }), null, 'the 90 s gap started');
   assert.equal(hold(n, 95_000, 99_000, { videoId: 'v3', expression: 'happy' })?.r, 'happy');
 });
+
+test('demo mode: noticed sooner (0.8 s), over a speech bubble, every 30 s', () => {
+  const n = new FeelingNoticer();
+  n.demo = true;
+  const hit = hold(n, 0, 3000, { busy: true });
+  assert.equal(hit?.r, 'happy', 'a bubble on screen does not block it in demo mode');
+  assert.ok(hit!.t < FEELING_RULES.holdMs, `noticed after ${hit!.t} ms`);
+  n.done();
+  assert.equal(hold(n, 3000, 20_000, { videoId: 'v2', expression: 'surprised' }), null, 'still a short gap');
+  assert.equal(hold(n, 31_000, 35_000, { videoId: 'v3', expression: 'surprised' })?.r, 'surprised');
+});
+
+test('mirror pop: every noticeable feeling has a short "I see you" text', async () => {
+  const { MIRROR_POP, NOTICEABLE } = await import('../src/shared/feelings');
+  for (const f of NOTICEABLE) assert.ok(MIRROR_POP[f], f);
+  assert.equal(MIRROR_POP.neutral, undefined);
+});

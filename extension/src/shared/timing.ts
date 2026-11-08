@@ -34,6 +34,7 @@ export interface PlaybackSnapshot {
   commentRequestId?: string | null; // active, visible selection; absent for normal video viewing
   commentReady?: boolean; // the buddy has arrived beside it
   readingComments?: boolean; // a hovered comment may be waiting for the previous bubble to finish
+  commentsOpen?: boolean; // the comment panel is open: the child is looking at comments, not the reel
   userAway?: boolean; // webcam: the viewer looked away / left (don't talk to an empty chair)
   userLaughing?: boolean; // webcam: the viewer is laughing right now (don't talk over them)
   conversationBusy?: boolean; // Talk owns spoken audio; other reactions can still appear as bubbles.
@@ -174,6 +175,7 @@ export function decide(
   if (s.userLaughing) return v('WAIT', 'user_laughing', 'you are laughing: not talking over you');
   if (s.readingComments || s.commentRequestId)
     return v('WAIT', 'reading_comments', 'reading a comment: video reactions wait');
+  if (s.commentsOpen) return v('WAIT', 'comments_open', 'the comments are open: reacting to comments instead of the reel');
   if (s.videoId && (mem.deliveredPerVideo.get(s.videoId) ?? 0) >= MAX_PER_SHORT[opts.frequency])
     return c.isCallback
       ? v('SAVE_FOR_LATER', 'per_short_cap', 'already reacted on this Short: saving the callback')

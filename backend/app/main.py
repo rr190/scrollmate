@@ -558,6 +558,17 @@ async def comment(req: CommentRequest, request: Request) -> CommentResponse:
     return report(reason, _race_path(winner))
 
 
+def _demo_line(b: Belief, video_id: str) -> ReactionCandidate:
+    """Demo mode safety net: a kind, written line about the Short when the AI had nothing to add."""
+    topic = b.topic if b.topic and b.topic != "unknown" else "video"
+    text = f"Ooh, this {topic} one is so fun to watch with you! 😊"
+    if not kid_safe(text):
+        text = "Ooh, this one is so fun to watch with you! 😊"
+    journal.note_proposed(text, "own_feeling")
+    return ReactionCandidate(text=text, importance=0.9, target_video_id=video_id, preferred_timing="now",
+                             expires_after_seconds=10, requires_quiet_moment=False, is_callback=False, move="own_feeling")
+
+
 # ---------- feelings: Mochi kindly notices the child's expression (a label, never an image) ----------
 FEELING_FACE = {
     "happy": "happy", "laughing": "laughing", "surprised": "surprised", "sad": "sad",
@@ -735,6 +746,7 @@ async def swipe(req: SwipeRequest, request: Request) -> SwipeResponse:
                 b.version += 1
     elif not req.title:
         path = "no title yet"
+    out.demo_mode = config.DEMO_MODE
     feed.publish(
         "swipe_result",
         videoId=req.video_id,
@@ -859,10 +871,13 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
 
     # Understanding a scene and finding a conversational line are different jobs.
     # Give the text model one bounded opportunity when vision understood the reel but stayed face-only.
+    demo = config.DEMO_MODE
+    normal_check = (req.frame and b.confidence >= 0.75 and (b.frames_seen >= 2 or out.final)
+                    and (req.frequency != "rare" or out.final))
+    demo_check = demo and b.confidence >= 0.5  # presenting: make sure every Short gets one comment
     if (
         raw is not None and not out.reactions and b.comments_proposed == 0 and not b.comment_checked
-        and req.frame and b.confidence >= 0.75 and b.topic != "unknown"
-        and (b.frames_seen >= 2 or out.final) and (req.frequency != "rare" or out.final)
+        and b.topic != "unknown" and (normal_check or demo_check)
         and not await request.is_disconnected()
     ):
         b.comment_checked = True  # set before awaiting so overlapping requests cannot duplicate the check
@@ -874,8 +889,10 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
                 timeout=3,
             )
             for candidate in response.reactions:
-                if candidate.importance < threshold:
+                if candidate.importance < threshold and not demo:
                     continue
+                if demo:
+                    candidate = candidate.model_copy(update={"importance": max(candidate.importance, 0.85)})
                 out.reactions = [candidate.model_copy(update={
                     "preferred_timing": "now", "requires_quiet_moment": False,
                     "expires_after_seconds": 60 if candidate.is_callback else 8,
@@ -887,8 +904,12 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
         except Exception as exc:
             log.warning("reel comment check %s failed: %s", req.video_id, type(exc).__name__)
             feed.publish("status", videoId=req.video_id, note="reel comment check unavailable; keeping the visual reaction")
+        if demo and not out.reactions:
+            out.reactions = [_demo_line(b, req.video_id)]
+            feed.publish("status", videoId=req.video_id, note="demo mode: written line so this Short gets a comment")
     b.comments_proposed += len(out.reactions)
 
+    out.demo_mode = config.DEMO_MODE
     feed.publish(
         "observe_result",
         videoId=req.video_id,
@@ -921,6 +942,7 @@ class ModelSettings(BaseModel):
     race_text: bool | None = None
     frames: str | None = None  # "auto" or "1".."12"
     audience: str | None = None  # the child's age range, e.g. "5-9"
+    demo_mode: bool | None = None  # presenting: guaranteed comments, faster feelings, no "looked away" holds
 
 
 def _provider_key(model: str | None) -> str | None:
@@ -991,6 +1013,8 @@ async def set_settings(body: ModelSettings) -> dict:
         if m and k and not config.has_key(k):
             raise HTTPException(400, f"{m} needs {k} in backend/.env")
     race_text = body.race_text if body.race_text is not None else cur["race_text"]
+    if body.demo_mode is not None:
+        config.set_demo(bool(body.demo_mode))
     if body.audience is not None:
         try:
             lo, hi = config.parse_audience(body.audience)

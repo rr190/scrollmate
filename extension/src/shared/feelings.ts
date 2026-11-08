@@ -16,6 +16,27 @@ export const FEELING_RULES = {
   afterSwipeMs: 4_000, // let a new Short settle first
 } as const;
 
+/** Demo mode (for presenting): the same idea, just sooner and more often so it shows up on stage. */
+export const DEMO_FEELING_RULES = {
+  holdMs: 800,
+  minStrength: 0.45,
+  gapMs: 30_000,
+  sameFeelingGapMs: 60_000,
+  afterSwipeMs: 2_000,
+} as const;
+
+/** What the buddy says it saw when it mirrors the child (a small pop under it, not a speech bubble). */
+export const MIRROR_POP: Partial<Record<UserExpression, string>> = {
+  laughing: "😂 you're laughing!",
+  happy: "😊 you're smiling!",
+  surprised: '😮 whoa, you too!',
+  sad: '😢 aww…',
+  scared: '😨 eek!',
+  confused: '🤨 hmm?',
+  disgusted: '🤢 eww!',
+  angry: '😠 grr!',
+};
+
 export interface FeelingInput {
   now: number;
   enabled: boolean; // companion + camera on
@@ -36,6 +57,8 @@ export class FeelingNoticer {
   private noticedShort: string | null = null;
   /** A line is being fetched: don't start another. */
   pending = false;
+  /** Demo mode: sooner, more often, and allowed over a speech bubble. */
+  demo = false;
 
   /** Returns the feeling to notice now, or null. */
   update(i: FeelingInput): UserExpression | null {
@@ -43,8 +66,8 @@ export class FeelingNoticer {
       this.current = i.expression;
       this.since = i.now;
     }
-    const R = FEELING_RULES;
-    if (this.pending || !i.enabled || !i.videoId || !i.present || i.lookingAway || i.busy) return null;
+    const R = this.demo ? DEMO_FEELING_RULES : FEELING_RULES;
+    if (this.pending || !i.enabled || !i.videoId || !i.present || i.lookingAway || (i.busy && !this.demo)) return null;
     if (!NOTICEABLE.has(i.expression) || i.strength < R.minStrength) return null;
     if (i.now - this.since < R.holdMs) return null;
     if (i.now - i.shortStartedAt < R.afterSwipeMs) return null;

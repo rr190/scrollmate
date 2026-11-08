@@ -154,6 +154,8 @@
         to <input type="number" id="mAgeHi" min="3" max="14" style="width:64px"></span></div>
       <div class="note" style="align-self:end">The buddy talks to a child this age in every feature: words, jokes and topics follow it. Applies to the next line.</div>
     </div>
+    <label class="check"><input type="checkbox" id="mDemo"> 🎬 Demo mode (for presenting): every Short gets a comment, feelings are noticed
+      sooner, and glancing away doesn't hold lines back. Applies from the next frame.</label>
     <div class="btns">
       <button class="primary" id="mApply">Apply custom</button>
       <button id="mPing">⚡ Speed test</button>
@@ -513,6 +515,7 @@ async function loadModels(view) {
   $('mFrames').value = cur.frames || 'auto';
   const [ageLo, ageHi] = String(cur.audience || '5-9').split('-');
   $('mAgeLo').value = ageLo; $('mAgeHi').value = ageHi || ageLo;
+  $('mDemo').checked = !!cur.demo_mode;
   $('knownModels').innerHTML = view.knownModels.map((m) => `<option value="${esc(m)}">${view.textOnly.includes(m) ? 'text only' : ''}</option>`).join('');
   $('modelsState').textContent = view.mock ? 'MOCK mode: no LLM calls are made' : (view.activePreset ? `preset: ${view.presets[view.activePreset].label}` : 'custom');
 }
@@ -536,6 +539,7 @@ $('mApply').onclick = () => applyModels({
 $('mFrames').onchange = () => applyModels({ frames: $('mFrames').value });
 const applyAge = () => applyModels({ audience: `${$('mAgeLo').value}-${$('mAgeHi').value}` });
 $('mAgeLo').onchange = applyAge;
+$('mDemo').onchange = () => applyModels({ demo_mode: $('mDemo').checked });
 $('mAgeHi').onchange = applyAge;
 $('mPing').onclick = async () => {
   const btn = $('mPing');

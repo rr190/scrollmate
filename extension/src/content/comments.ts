@@ -206,6 +206,33 @@ export class CommentsWatcher {
     } else this.cb.onHint(null);
   }
 
+  /**
+   * The comments are open but the child isn't pointing at one: pick the first visible top-level comment we haven't
+   * read yet and react to it, exactly like a hover would. Returns true when a visit started.
+   */
+  autoSelect(alreadyRead: (text: string) => boolean): boolean {
+    if (!this.cb.enabled() || this.active || this.candidate || document.hidden) return false;
+    for (const el of document.querySelectorAll<HTMLElement>(TEXT)) {
+      if (!el.closest(COMMENT) || el.closest('ytd-comment-replies-renderer, #replies') || !el.closest(PANEL)) continue;
+      if (!visibleRect(el)) continue;
+      const text = normalize(el.innerText);
+      if (!text || alreadyRead(text)) continue;
+      const target = this.read(el);
+      if (!target) continue;
+      this.active = { element: el, target };
+      this.focused = el;
+      this.cb.onFocus?.(target);
+      const result = this.cb.onSelect(target);
+      if (!result.accepted) {
+        this.active = null;
+        this.focused = null;
+        return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
   discussionContext(): { commentsOpen: boolean; visibleComments: string[] } {
     const visibleComments: string[] = [];
     if (document.hidden) return { commentsOpen: false, visibleComments };

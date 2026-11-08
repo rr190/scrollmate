@@ -257,6 +257,9 @@ export function App({ ctl }: { ctl: Controller }) {
           <span className="sm-reading-label" role="status">{visit.phase === 'running' ? 'Coming over…' : 'Reading…'}</span>
         )}
         {!open && !s.talk.active && !visit && st.enabled && s.commentHint && <span className="sm-reading-label" role="status">{s.commentHint}</span>}
+        {!open && st.enabled && s.mirrorPop && !s.commentHint && (
+          <span key={s.mirrorPop.id} className="sm-mirror-pop" role="status">{s.mirrorPop.text}</span>
+        )}
 
         {s.demo && ctl.env === 'youtube' && (
           <div className="sm-demo-strip">
