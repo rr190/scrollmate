@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from '../src/content/App';
+import { COMMENT_DWELL_MS } from '../src/content/comments';
 import { Controller } from '../src/content/controller';
 import { DEFAULT_SETTINGS } from '../src/shared/types';
 import type { BgRequest, CommentReactResponse } from '../src/shared/messages';
@@ -85,7 +86,8 @@ const reply = (requestId: string) => {
   p.callback(response); pending.delete(requestId);
 };
 const latest = () => commentRequests().at(-1)!;
-const select = async (el: HTMLElement) => { hover(el); await wait(1100); assert(ctl.state.commentVisit, 'deliberate hover should start a visit'); };
+// Wait just past the hover dwell: the visit has started and the buddy is still travelling.
+const select = async (el: HTMLElement) => { hover(el); await wait(COMMENT_DWELL_MS + 100); assert(ctl.state.commentVisit, 'deliberate hover should start a visit'); };
 const reset = async () => { panel.hidden = false; await ctl.clearMemory(); await wait(30); };
 
 async function run() {
@@ -124,7 +126,7 @@ async function run() {
     'genuinely clipped comments must still be rejected');
   clippingShell.style.transform = '';
   clippingShell.before(panel); clippingShell.remove();
-  hover(first); await wait(400);
+  hover(first); await wait(100); // still inside the hover dwell (COMMENT_DWELL_MS = 250)
   const replacement = first.cloneNode(true) as HTMLElement;
   first.replaceWith(replacement); first = replacement;
   await wait(1800);
@@ -161,6 +163,10 @@ async function run() {
   // No wait between comment visits: once the previous bubble is gone, the next comment is visited right away.
   assert(ctl.state.commentVisit?.id && commentRequests().length === count + 1, 'the next comment should be visited with no countdown');
   assert(!ctl.state.commentHint?.startsWith('Next comment in '), 'there should be no "Next comment in" countdown');
+  // Comment context: the earlier comment on this Short and ScrollMate's reply to it travel with the next request.
+  const prev = latest().previousComments ?? [];
+  assert(prev.length >= 1 && prev.at(-1)!.reaction === 'the door disagrees.', 'the next comment should carry the previous comment + reply as context');
+  assert(!prev.some((p) => p.text === latest().text), 'the selected comment must not appear in its own context');
   reply(latest().requestId);
 
   await reset(); await select(second);

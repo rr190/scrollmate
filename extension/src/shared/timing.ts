@@ -147,6 +147,14 @@ export function decide(
   if (ageS > c.expiresAfterSeconds)
     return v('STAY_SILENT', 'expired', `expired after ${c.expiresAfterSeconds}s without a good moment`);
 
+  // A comment the user deliberately picked is its own moment: no importance bar, no reading gap.
+  // Only wait for the buddy to arrive beside it. Always a silent bubble, even when Voice is enabled.
+  if (c.targetCommentId) {
+    if (s.videoId !== c.targetVideoId) return v('STAY_SILENT', 'stale', 'user scrolled away from the commented Short');
+    if (!s.commentReady) return v('WAIT', 'comment_travel', 'buddy is moving beside the selected comment');
+    return v('SPEAK_NOW', 'selected_comment', 'reacting beside the visible selected comment', 'bubble');
+  }
+
   const minImp = MIN_IMPORTANCE[opts.frequency];
   if (c.importance < minImp)
     return v('STAY_SILENT', 'low_importance', `importance ${c.importance.toFixed(2)} < ${minImp} for "${opts.frequency}"`);
@@ -155,13 +163,9 @@ export function decide(
   if (!onScreen && !c.isCallback)
     return v('STAY_SILENT', 'stale', 'user scrolled away: reaction is about a Short no longer on screen');
 
-  if (s.readingComments && !c.targetCommentId)
+  // (Comment lines returned above; everything below is a video reaction.)
+  if (s.readingComments || s.commentRequestId)
     return v('WAIT', 'reading_comments', 'reading a comment: video reactions wait');
-
-  if (s.commentRequestId) {
-    if (!c.targetCommentId) return v('WAIT', 'reading_comments', 'reading a comment: video reactions wait');
-    if (!s.commentReady) return v('WAIT', 'comment_travel', 'buddy is moving beside the selected comment');
-  }
 
   if (s.videoId && (mem.deliveredPerVideo.get(s.videoId) ?? 0) >= MAX_PER_SHORT[opts.frequency])
     return c.isCallback
@@ -183,10 +187,6 @@ export function decide(
       ? v('SAVE_FOR_LATER', 'cooldown', `${what} (${left}s left): saving the callback`)
       : v('WAIT', 'cooldown', `${what} (${left}s left)`);
   }
-
-  // A deliberate reading interaction is its own moment; always silent, even when Voice is enabled.
-  if (c.targetCommentId)
-    return v('SPEAK_NOW', 'selected_comment', 'reacting beside the visible selected comment', 'bubble');
 
   const gap = naturalGap(s, now);
   if (gap) {

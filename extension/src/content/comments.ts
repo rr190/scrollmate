@@ -1,6 +1,6 @@
 import type { Rect } from '../shared/types';
 
-export const COMMENT_DWELL_MS = 1000;
+export const COMMENT_DWELL_MS = 250; // brief pause on a comment = "I mean this one" (skimming past still does nothing)
 export const COMMENT_TRAVEL_MS = 650;
 export const companionSize = (width: number) => Math.round(Math.min(110, Math.max(80, width * 0.065)));
 

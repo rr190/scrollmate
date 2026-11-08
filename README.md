@@ -75,7 +75,7 @@ To use a backend somewhere other than `http://localhost:8000`, build with `VITE_
 
 ## Reactions to comments
 
-On a real YouTube Short, enable **AI companion** and **Comment reactions** in the buddy's settings, close the buddy's settings, then open YouTube's comments yourself. Clicking outside the buddy closes its settings automatically. Hold the mouse still over a visible top-level comment's text for one second. Passing over comments, links, replies, or buttons does not trigger a request.
+On a real YouTube Short, enable **AI companion** and **Comment reactions** in the buddy's settings, close the buddy's settings, then open YouTube's comments yourself. Clicking outside the buddy closes its settings automatically. Rest the mouse on a visible top-level comment's text for a moment (0.25 s). Passing over comments, links, replies, or buttons does not trigger a request.
 
 The buddy hops to a free lane beside the comments panel while the backend requests a text-only reaction from the selected text model. A purple outline identifies the selected comment. It reacts silently after arriving, or shows only an expression when no line is worth saying. Click its bubble to dismiss it and return home. Automatic visits preserve its saved, dragged position. If neither side has room, it stays home instead of covering the comments. Reduced-motion preferences disable travel animation.
 
@@ -85,7 +85,7 @@ Scrolling, closing the panel, changing the comment's text/layout, navigating to 
 
 `POST /scrollmate/comment` accepts `requestId`, `videoId`, `commentId`, `text` (max 1200 characters), optional `title`/`videoSummary`, `personality` and `frequency`. It returns the same request/comment identifiers, an optional emotion, and zero or one reaction bound to that exact selection. The endpoint reuses structured output and the conversational personality prompts, has a six-second generation deadline, and degrades to silence on failure. Mock mode gives a curious expression without calling a model. No extra vision call or humaniser service is needed.
 
-The selected text and existing video notes are sent to the model provider only after a deliberate hover while the feature is on. Author metadata and the whole thread are not collected. Raw comment text is not persisted or added to the backend's live feed. YouTube may change its comment DOM; the detector supports current `ytd-comment-view-model` and older `ytd-comment-renderer` elements and intentionally limits support to top-level comments on Shorts.
+The selected text and existing video notes are sent to the model provider only after a deliberate hover while the feature is on. Author metadata and the whole thread are not collected. For context, the extension keeps the last 5 comments it reacted to on the current Short, with its own replies, in memory only. That list goes with the next comment request and is wiped when you change Short or press **Clear memory**. Raw comment text is not persisted or added to the backend's live feed. YouTube may change its comment DOM; the detector supports current `ytd-comment-view-model` and older `ytd-comment-renderer` elements and intentionally limits support to top-level comments on Shorts.
 
 Local checks (no provider calls):
 

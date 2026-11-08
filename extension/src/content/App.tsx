@@ -161,7 +161,10 @@ export function App({ ctl }: { ctl: Controller }) {
           <span className={`sm-dot ${st.enabled ? 'sm-on' : 'sm-off'}`} title={st.enabled ? 'Active' : 'Off'} />
           {st.demo && st.enabled && <span className="sm-demo-badge">DEMO</span>}
         </button>
-        {visit && !s.bubble && <span className="sm-reading-label" role="status">{visit.phase === 'running' ? 'Coming over…' : visit.phase === 'reading' ? 'Reading…' : 'Hmm…'}</span>}
+        {/* No label once it's reacting: a face-only reaction speaks for itself (no lone "Hmm…"). */}
+        {visit && !s.bubble && visit.phase !== 'reacting' && (
+          <span className="sm-reading-label" role="status">{visit.phase === 'running' ? 'Coming over…' : 'Reading…'}</span>
+        )}
         {!visit && st.enabled && s.commentHint && <span className="sm-reading-label" role="status">{s.commentHint}</span>}
 
         {s.demo && ctl.env === 'youtube' && (

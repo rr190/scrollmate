@@ -26,12 +26,27 @@ test('closing or changing comment target drops queued reactions', () => {
     assert.equal(e.queue.length, 0);
   }
 });
-test('travel delays delivery; comments and videos share the reading gap', () => {
+test('travel delays delivery; a selected comment does not wait out the reading gap', () => {
   const e = engine();
   assert.equal(e.propose(comment, { ...snapshot, commentReady: false }, 1000), null);
   assert.equal(e.tick(snapshot, 1700)?.candidate.id, comment.id);
-  assert.equal(e.propose({ ...comment, id: 'other', text: 'a second line' }, snapshot, 1800), null);
-  assert.equal(e.tick(snapshot, 6700)?.candidate.id, 'other');
+  // Deliberately chosen comment: shows right after the previous bubble, no 5 s gap.
+  assert.equal(e.propose({ ...comment, id: 'other', text: 'a second line' }, snapshot, 1800)?.candidate.id, 'other');
+});
+
+test('a video reaction still waits out the reading gap after a comment bubble', () => {
+  const e = engine();
+  e.propose(comment, snapshot, 1000);
+  const video: Candidate = { ...comment, id: 'video', text: 'video line', targetCommentId: undefined, commentRequestId: undefined };
+  const free = { ...snapshot, commentRequestId: null, commentReady: false, currentTime: 10 };
+  assert.equal(e.propose(video, free, 2000), null);
+  assert.equal(e.tick(free, 6500)?.candidate.id, 'video');
+});
+
+test('a low-importance comment line is still shown (the user picked this comment); a low video line is not', () => {
+  assert.equal(engine().propose({ ...comment, importance: 0.1 }, snapshot, 1000)?.candidate.id, comment.id);
+  const video: Candidate = { ...comment, importance: 0.1, targetCommentId: undefined, commentRequestId: undefined };
+  assert.equal(engine().propose(video, { ...snapshot, commentRequestId: null }, 1000), null);
 });
 test('video reactions wait while reading; cancelling comments preserves the video queue', () => {
   const e = engine();
@@ -48,11 +63,10 @@ test('hover intent prevents new video bubbles from starving a waiting comment se
   assert.equal(e.propose(video, { ...snapshot, commentRequestId: null, readingComments: true }, 1000), null);
   assert.equal(e.tick({ ...snapshot, commentRequestId: null, readingComments: false, currentTime: 5 }, 1100)?.candidate.id, video.id);
 });
-test('disabled, expired, low-importance and wrong-video comment reactions stay silent', () => {
+test('disabled, expired and wrong-video comment reactions stay silent', () => {
   for (const [c, s, now] of [
     [comment, { ...snapshot, enabled: false }, 1000],
     [comment, snapshot, 10000],
-    [{ ...comment, importance: 0.1 }, snapshot, 1000],
     [comment, { ...snapshot, videoId: 'other-video' }, 1000],
   ] as const) assert.equal(engine().propose(c, s, now), null);
 });

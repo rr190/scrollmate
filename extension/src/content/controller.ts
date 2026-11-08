@@ -8,6 +8,7 @@ import {
   sendBg,
   type CaptionReactResponse,
   type CommentReactResponse,
+  type PreviousComment,
   type CaptureResponse,
   type ObserveResponse,
   type ReactResponse,
@@ -67,6 +68,7 @@ const SETTINGS_KEY = 'scrollmate.settings';
 const posKey = (env: Env) => `scrollmate.position.${env}`;
 const SLEEP_AFTER_MS = 90_000;
 const CAPTION_EVERY_MS = 4_000;
+const COMMENT_HISTORY_MAX = 5; // earlier comments sent as context
 const MAX_FRAMES_REQUEST = 12; // upper bound we ask for; the backend's setting decides
 const DEFAULT_MAX_FRAMES = 4; // until the backend has told us
 const FIRST_FRAME_AT_S = 0.4; // as soon as the video is really playing
@@ -107,6 +109,8 @@ export class Controller {
   private comments: CommentsWatcher | null = null;
   private commentAttempt: { requestId: string; videoId: string; readyAt: number; expiresAt: number; response?: CommentReactResponse; handled: boolean } | null = null;
   private seenComments = new Set<string>(); // bounded to the current Short; no persistent comment text
+  /** Last few comments reacted to on this Short + what ScrollMate said, sent as context. RAM only, per Short. */
+  private commentHistory: PreviousComment[] = [];
   private commentsPaused = false; // settings/dragging take precedence over automatic movement
 
   constructor(public env: Env, private host: HTMLElement) {}
@@ -245,6 +249,7 @@ export class Controller {
       const res = await sendBg<CommentReactResponse>({
         type: 'COMMENT_REACT', requestId, videoId, commentId: target.id, text: target.text,
         title: this.ctx?.title || readPageText().title,
+        previousComments: this.commentHistory.slice(-COMMENT_HISTORY_MAX),
         personality: this.state.settings.personality, frequency: this.state.settings.frequency,
       });
       if (this.commentAttempt?.requestId !== requestId || res?.requestId !== requestId || res.targetCommentId !== target.id) return;
@@ -288,6 +293,11 @@ export class Controller {
       return;
     }
     this.set({ commentVisit: { ...this.state.commentVisit!, emotion: res.emotion, phase: 'reacting' } });
+    // Remember this exchange so the next comment on this Short can build on it.
+    this.commentHistory = [
+      ...this.commentHistory,
+      { text: visit.text.slice(0, 300), reaction: res.reactions?.[0]?.text ?? null, emotion: res.emotion ?? null },
+    ].slice(-COMMENT_HISTORY_MAX);
     // The extension binds targets and timing itself; the model cannot redirect a reaction.
     this.propose((res.reactions ?? []).slice(0, 1).map((r) => ({
       ...r, targetVideoId: attempt.videoId, targetCommentId: visit.id, commentRequestId: attempt.requestId,
@@ -321,6 +331,7 @@ export class Controller {
     this.cancelCommentVisit();
     this.comments?.reset();
     this.seenComments.clear();
+    this.commentHistory = [];
     this.cues.clear();
     this.engine.clear();
     this.speaker.cancel();
@@ -543,6 +554,7 @@ export class Controller {
     this.cancelCommentVisit();
     this.comments?.reset();
     this.seenComments.clear();
+    this.commentHistory = [];
     this.navTimes.push(info.startedAt);
     if (prev) this.handleLeft(prev);
     const prevTitle = this.ctx?.title ?? '';

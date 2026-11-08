@@ -641,6 +641,14 @@ function onFeedEvent(ev) {
     case 'caption_request':
       line(card, ev.ts, 'captions', 'ai', `“${esc((ev.lines || []).join(' | '))}”${ev.at != null ? ` <span class="k">at ${ev.at}s</span>` : ''}`);
       break;
+    case 'comment_result': {
+      const why = { line: 'line', too_long_trimmed: 'line (trimmed to 15 words)', model_silent: 'face only: model chose no line',
+        unsafe_blocked: 'face only: line blocked by safety filter', timeout: 'nothing: model took > 6 s', error: 'nothing: model error',
+        mock: 'mock mode: face only' }[ev.reason] || ev.reason;
+      line(card, ev.ts, 'comment →', ev.hasLine ? 'ai' : (ev.reason === 'timeout' || ev.reason === 'error' ? 'err' : ''),
+        `${ev.emotion ? (EMO[ev.emotion] || '') + ' <b>' + esc(ev.emotion) + '</b> · ' : ''}${esc(why)} <span class="k">· ${ev.ms} ms${ev.path ? ' · ' + esc(ev.path) : ''}</span>`);
+      break;
+    }
     case 'caption_result':
       line(card, ev.ts, 'said →', 'ai',
         (ev.emotion ? `${EMO[ev.emotion] || ''} <b>${esc(ev.emotion)}</b> ` : '') +

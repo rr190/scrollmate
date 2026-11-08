@@ -166,6 +166,14 @@ class LLMCaptionReaction(BaseModel):
 
 
 # ---------- hovered, visible comments (text only) ----------
+class PreviousComment(Camel):
+    """A comment ScrollMate already reacted to on this Short, and what it said (context for the next one)."""
+
+    text: str = Field(max_length=300)
+    reaction: str | None = Field(default=None, max_length=160)
+    emotion: str | None = Field(default=None, max_length=20)
+
+
 class CommentRequest(Camel):
     request_id: str = Field(min_length=1, max_length=100)
     video_id: str = Field(min_length=1, max_length=64)
@@ -173,6 +181,8 @@ class CommentRequest(Camel):
     text: str = Field(min_length=1, max_length=1200)
     title: str = Field(default="", max_length=300)
     video_summary: str = Field(default="", max_length=600)
+    # Earlier comments on THIS Short (oldest first) and ScrollMate's own replies. RAM only on both sides.
+    previous_comments: list[PreviousComment] = Field(default_factory=list, max_length=5)
     personality: Personality = "witty"
     frequency: Frequency = "balanced"
 

@@ -48,10 +48,35 @@ class CommentTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.post_with(raw)
                 self.assertEqual(response.json()["reactions"], [])
 
-    async def test_unsafe_and_overlong_lines_are_not_displayed(self):
-        for text in ("that commenter is ugly", "word " * 16):
+    async def test_unsafe_lines_are_not_displayed(self):
+        for text in ("that commenter is ugly", "go kill yourself", "this gave me cancer"):
             raw = LLMCommentReaction(reaction=LLMReaction(text=text, importance=0.9))
-            self.assertEqual((await self.post_with(raw)).json()["reactions"], [])
+            self.assertEqual((await self.post_with(raw)).json()["reactions"], [], text)
+
+    async def test_overlong_lines_are_trimmed_not_dropped(self):
+        long = "this is honestly the most chaotic cooking video I have seen all week, the smoke alarm agrees"
+        raw = LLMCommentReaction(reaction=LLMReaction(text=long, importance=0.9))
+        lines = (await self.post_with(raw)).json()["reactions"]
+        self.assertEqual(len(lines), 1)
+        self.assertLessEqual(len(lines[0]["text"].split()), 15)
+
+    async def test_internet_slang_is_allowed(self):
+        for text in ("I'm dead, the door won", "this never gets old", "the dog is killing it"):
+            raw = LLMCommentReaction(reaction=LLMReaction(text=text, importance=0.7))
+            self.assertEqual(len((await self.post_with(raw)).json()["reactions"]), 1, text)
+
+    async def test_low_model_importance_is_raised_for_a_chosen_comment(self):
+        raw = LLMCommentReaction(emotion="happy", reaction=LLMReaction(text="same, honestly", importance=0.2))
+        lines = (await self.post_with(raw)).json()["reactions"]
+        self.assertEqual(len(lines), 1)
+        self.assertGreaterEqual(lines[0]["importance"], 0.6)
+
+    async def test_feed_reports_why_without_comment_text(self):
+        main.feed.clear()
+        await self.post_with(LLMCommentReaction(emotion="curious"))
+        ev = [e for e in main.feed._events if e["type"] == "comment_result"][-1]
+        self.assertEqual((ev["reason"], ev["hasLine"]), ("model_silent", False))
+        self.assertNotIn(self.payload["text"], json.dumps(ev))
 
     async def test_timeout_degrades_to_silence(self):
         with patch.object(main.config, "MOCK", False), patch.object(main, "_text_call", new=AsyncMock(side_effect=asyncio.TimeoutError)):

@@ -341,6 +341,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
           '/scrollmate/comment',
           { requestId: msg.requestId, videoId: msg.videoId, commentId: msg.commentId, text: msg.text,
             title: msg.title, videoSummary: record?.summary.slice(0, 600) ?? '',
+            previousComments: (msg.previousComments ?? []).slice(-5),
             personality: msg.personality, frequency: msg.frequency },
           8_000, `comment:${sender.tab?.id ?? 'stage'}:${msg.requestId}`,
         );

@@ -131,6 +131,31 @@ def safe(text: str) -> bool:
     return 3 <= len(text) <= 160 and not _BLOCK.search(text)
 
 
+# Comment replies use internet slang ("I'm dead 💀", "killing it", "this never gets old"), so "dead", "kill…"
+# and "old" are allowed here. Real deaths, self-harm, slurs, appearance and protected traits stay blocked.
+_COMMENT_BLOCK = re.compile(
+    r"\b(ugly|fat|skinny|race|racist|black people|white people|gay|religio\w*|disabled|retard\w*|died|death|suicide|"
+    r"cancer|nazi|kys|kill (yo)?ur ?self|kill (him|her|them)sel(f|ves))\b",
+    re.I,
+)
+
+
+def comment_safe(text: str) -> bool:
+    return 3 <= len(text) <= 160 and not _COMMENT_BLOCK.search(text)
+
+
+def trim_words(text: str, limit: int = 15) -> str:
+    """Shorten an over-long line instead of throwing it away (cut at the last punctuation if it's not too early)."""
+    words = text.split()
+    if len(words) <= limit:
+        return text
+    cut = " ".join(words[:limit])
+    stop = max(cut.rfind(p) for p in ".!?,;—")
+    if stop >= len(cut) // 2:
+        cut = cut[: stop + 1]
+    return cut.rstrip(",;:—- ") + ("" if cut[-1:] in ".!?" else "…")
+
+
 _UI = Path(__file__).resolve().parent / "static" / "ui.html"
 
 
@@ -428,33 +453,50 @@ async def comment(req: CommentRequest, request: Request) -> CommentResponse:
     out = CommentResponse(request_id=req.request_id, target_comment_id=req.comment_id)
     if not req.text.strip() or await request.is_disconnected():
         return out
+    t0 = time.perf_counter()
+
+    def report(reason: str, path: str = "") -> CommentResponse:
+        # Timing, provider and outcome only: never the comment, its author, or the generated line.
+        feed.publish(
+            "comment_result", videoId=req.video_id, ms=_ms(t0), path=path, emotion=out.emotion,
+            hasLine=bool(out.reactions), reason=reason,
+        )
+        return out
+
     if config.MOCK:
         out.emotion = "curious"  # exercise the visit without pretending to understand the comment
-        return out
-    t0 = time.perf_counter()
+        return report("mock")
     try:
         raw, winner = await asyncio.wait_for(
             _text_call(LLMCommentReaction, comment_messages(req), temperature=0.7, max_tokens=CAPTION_MAX_TOKENS),
             timeout=6.0,
         )
+    except asyncio.TimeoutError:
+        log.info("comment reaction timed out")
+        return report("timeout")
     except Exception as exc:
         log.info("comment reaction unavailable: %s", type(exc).__name__)
-        return out
-    if raw is None or await request.is_disconnected():
+        return report("error")
+    if raw is None:
+        return report("error", _race_path(winner))
+    if await request.is_disconnected():
         return out
     out.emotion = raw.emotion
+    reason = "model_silent"
     if raw.reaction:
         text = " ".join(raw.reaction.text.split())
-        if safe(text) and len(text.split()) <= 15:
+        trimmed = trim_words(text, 15)
+        if not comment_safe(trimmed):
+            reason = "unsafe_blocked"
+        else:
+            reason = "too_long_trimmed" if trimmed != text else "line"
             out.reactions.append(CommentReactionCandidate(
-                text=text, importance=raw.reaction.importance,
+                text=trimmed, importance=max(raw.reaction.importance, 0.6),
                 target_video_id=req.video_id, target_comment_id=req.comment_id,
                 comment_request_id=req.request_id, preferred_timing="now",
                 expires_after_seconds=8, requires_quiet_moment=False, is_callback=False,
             ))
-    # Record timing/provider only, not the comment, its author, or its generated paraphrase.
-    feed.publish("status", note="comment reaction ready", ms=_ms(t0), path=_race_path(winner))
-    return out
+    return report(reason, _race_path(winner))
 
 
 # ---------- live loop: swipe (title, instant) + observe (one frame at a time) ----------

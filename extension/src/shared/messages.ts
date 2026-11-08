@@ -31,6 +31,8 @@ export type BgRequest =
       commentId: string;
       text: string;
       title: string;
+      /** Comments already reacted to on this Short (oldest first) and what ScrollMate said. RAM only. */
+      previousComments: PreviousComment[];
       personality: Personality;
       frequency: Frequency;
     }
@@ -79,6 +81,12 @@ export interface CaptionReactResponse {
   reactions: ReactionProposal[];
   error?: string;
 }
+export interface PreviousComment {
+  text: string;
+  reaction: string | null;
+  emotion: string | null;
+}
+
 export interface CommentReactResponse {
   requestId: string;
   targetCommentId: string;
