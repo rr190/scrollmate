@@ -130,5 +130,5 @@ function Stage({ ctl }: { ctl: Controller }) {
   );
 }
 
-const ctl = mountScrollMate('stage');
+const { ctl } = mountScrollMate('stage');
 createRoot(document.getElementById('stage')!).render(<Stage ctl={ctl} />);

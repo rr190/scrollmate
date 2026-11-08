@@ -27,7 +27,7 @@
     }
   ],
   "action": {
-    "default_title": "ScrollMate: click to let it see this tab's Shorts (grants screen frames)"
+    "default_title": "ScrollMate: click to turn it on or off completely"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"

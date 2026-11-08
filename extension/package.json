@@ -14,6 +14,7 @@
     "setup:mediapipe": "node scripts/setup-mediapipe.mjs",
     "test:roam": "tsx --test tests/roam.test.ts",
     "test:roam:browser": "node scripts/test-comments-browser.mjs tests/roam.browser.ts 110000",
+    "test:power:browser": "node scripts/test-comments-browser.mjs tests/power.browser.ts 20000",
     "test:face": "tsx --test tests/faceSignals.test.ts tests/gaze.test.ts tests/gazeZones.test.ts tests/feelings.test.ts",
     "build:face-lib": "esbuild src/shared/faceSignals.ts --format=esm --outfile=../backend/app/static/faceSignals.js --log-level=warning"
   },

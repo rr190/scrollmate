@@ -22,6 +22,7 @@ import type {
   GazeConfig,
 } from '../shared/messages';
 import { GAZE_MODEL_KEY, type GazeModelData } from '../shared/faceSignals';
+import { badgeFor, HIDDEN_KEY } from '../shared/power';
 import type { Analysis, MemoryRecord, ReactionProposal, Rect } from '../shared/types';
 
 const BACKEND = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? 'http://localhost:8000';
@@ -538,8 +539,35 @@ chrome.runtime.onMessage.addListener((msg: BgRequest & { target?: string }, send
   return true; // async response
 });
 
-// Clicking the toolbar icon grants activeTab, which captureVisibleTab needs.
-chrome.action.onClicked.addListener((tab) => {
-  captureBlockedUntil = 0;
-  if (tab.id !== undefined) chrome.tabs.sendMessage(tab.id, { type: 'ACTIVE_TAB_GRANTED' }).catch(() => undefined);
+// ---------- one-click power switch: the toolbar icon turns ScrollMate completely on/off ----------
+async function isHidden(): Promise<boolean> {
+  const r = await chrome.storage.local.get(HIDDEN_KEY).catch(() => ({}) as Record<string, unknown>);
+  return r[HIDDEN_KEY] === true;
+}
+
+async function showBadge(hidden: boolean) {
+  const b = badgeFor(hidden);
+  await chrome.action.setBadgeText({ text: b.text }).catch(() => undefined);
+  await chrome.action.setBadgeBackgroundColor({ color: b.color }).catch(() => undefined);
+  await chrome.action.setTitle({ title: b.title }).catch(() => undefined);
+}
+
+// Clicking the toolbar icon flips the switch. Content scripts follow chrome.storage, so every tab updates at once.
+// Turning on also grants activeTab for this tab, which captureVisibleTab needs (as before).
+chrome.action.onClicked.addListener(async (tab) => {
+  const hidden = !(await isHidden());
+  await chrome.storage.local.set({ [HIDDEN_KEY]: hidden });
+  await showBadge(hidden);
+  if (hidden) {
+    // completely off: stop anything still running here too
+    abortAll();
+    camWanted = false;
+    await closeCameraPage();
+  } else {
+    captureBlockedUntil = 0;
+    if (tab.id !== undefined) chrome.tabs.sendMessage(tab.id, { type: 'ACTIVE_TAB_GRANTED' }).catch(() => undefined);
+  }
 });
+
+// keep the badge right after a browser restart or an extension update
+void isHidden().then(showBadge);

@@ -189,6 +189,7 @@ export class Controller {
       });
     }
     chrome.runtime.onMessage.addListener((m: TabMessage) => {
+      if (this.destroyed) return false;
       if (m?.type === 'USER_SIGNAL') this.onUserSignal(m.signal);
       else if (m?.type === 'GAZE') this.onGaze(m.x, m.y);
       else if (m?.type === 'GAZE_CALIBRATED') void this.loadGazeModelInfo().then(() => this.set({ note: 'Eye tracking calibrated ✓' }));
@@ -201,7 +202,13 @@ export class Controller {
     this.tick();
   }
 
+  private destroyed = false;
+
   destroy() {
+    this.destroyed = true;
+    this.epoch++; // late async results are ignored
+    sendBg({ type: 'CANCEL_ALL' }).catch(() => undefined);
+    this.stopDemo();
     window.clearInterval(this.tickTimer);
     this.watcher?.stop();
     this.comments?.stop();
