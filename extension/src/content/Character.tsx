@@ -24,7 +24,7 @@ const SPROUT = sproutPaths(0, 100, 58); // drawn upright; the pose is a CSS rota
 /** Mood changes that deserve a bigger squash-and-bounce (reactions to the video). */
 const BIG = new Set<Mood>(['surprised', 'laughing', 'impressed', 'cringe', 'love']);
 
-export function Character({ mood }: { mood: Mood }) {
+export function Character({ mood, look: viewerLook = null }: { mood: Mood; look?: { x: number; y: number } | null }) {
   const look = LOOKS[mood] ?? LOOKS.idle;
   const face = look.face;
   const [le, re] = Array.isArray(face.eyes) ? face.eyes : [face.eyes, face.eyes];
@@ -93,7 +93,8 @@ export function Character({ mood }: { mood: Mood }) {
           </g>
 
           {/* face (gaze offset transitions between moods) */}
-          <g className="sm-face" style={{ transform: `translate(${look.look?.[0] ?? 0}px, ${look.look?.[1] ?? 0}px)` }}>
+          {/* + eye tracking: the face turns toward where the viewer is looking (straight ahead = eye contact) */}
+          <g className="sm-face" style={{ transform: `translate(${(look.look?.[0] ?? 0) + (viewerLook?.x ?? 0) * 7}px, ${(look.look?.[1] ?? 0) + (viewerLook?.y ?? 0) * 5}px)` }}>
             <ellipse cx={47} cy={134} rx={10} ry={6} fill="#FF8FB8" className="sm-blush" style={{ opacity: look.blush * 0.8 }} />
             <ellipse cx={153} cy={134} rx={10} ry={6} fill="#FF8FB8" className="sm-blush" style={{ opacity: look.blush * 0.8 }} />
 

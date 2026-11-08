@@ -7,7 +7,9 @@
 import {
   sendBg,
   type CaptionReactResponse,
+  type CameraState,
   type CommentReactResponse,
+  type TabMessage,
   type PreviousComment,
   type CaptureResponse,
   type ObserveResponse,
@@ -16,13 +18,14 @@ import {
   type TelemetryEvent,
 } from '../shared/messages';
 import { predictMoment } from '../shared/moments';
+import { GAZE_MODEL_KEY, gazeZone, screenToViewport, ZoneDwell, type GazeModelData, type GazeZone, type UserSignal } from '../shared/faceSignals';
 import { CueTrack, type Emotion, type EmotionCue } from '../shared/emotions';
 import { TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
 import { DEFAULT_SETTINGS, type MemoryRecord, type ReactionProposal, type Rect, type Settings } from '../shared/types';
 import { DEMO_SHORTS, DemoDriver, type DemoShort, type DemoView } from './demo';
 import { readPageText, ShortsWatcher, type LeftInfo, type ShortInfo } from './shorts';
 import { Speaker } from './speech';
-import { CommentsWatcher, COMMENT_TRAVEL_MS, commentPosition, type CommentTarget, type CommentSelection } from './comments';
+import { CommentsWatcher, PANEL, COMMENT_TRAVEL_MS, commentPosition, type CommentTarget, type CommentSelection } from './comments';
 
 const LOG = '[ScrollMate]';
 export type Mood = 'idle' | 'watching' | 'thinking' | 'amused' | 'speaking' | 'sleeping' | Emotion;
@@ -44,6 +47,10 @@ export interface UiState {
   note: string | null;
   commentHint: string | null;
   commentVisit: (CommentTarget & { requestId: string; phase: 'running' | 'reading' | 'reacting'; emotion: Emotion | null }) | null;
+  camera: CameraState; // webcam status (opt-in)
+  user: UserSignal | null; // latest on-device face signal
+  /** Eye tracking (opt-in): where the viewer is looking, as a coarse zone. */
+  gaze: { calibrated: boolean; error: number | null; zone: GazeZone | null; look: { x: number; y: number } | null };
 }
 
 interface ShortCtx {
@@ -67,6 +74,13 @@ interface ShortCtx {
 const SETTINGS_KEY = 'scrollmate.settings';
 const posKey = (env: Env) => `scrollmate.position.${env}`;
 const SLEEP_AFTER_MS = 90_000;
+/** Which of the viewer's expressions Mochi mirrors. */
+const USER_TO_EMOTION: Partial<Record<UserSignal['expression'], Emotion>> = {
+  laughing: 'laughing',
+  happy: 'happy',
+  surprised: 'surprised',
+  sad: 'sad',
+};
 const CAPTION_EVERY_MS = 4_000;
 const COMMENT_HISTORY_MAX = 5; // earlier comments sent as context
 const MAX_FRAMES_REQUEST = 12; // upper bound we ask for; the backend's setting decides
@@ -89,6 +103,9 @@ export class Controller {
     note: null,
     commentHint: null,
     commentVisit: null,
+    camera: 'off',
+    user: null,
+    gaze: { calibrated: false, error: null, zone: null, look: null },
   };
   engine = new TimingEngine({ frequency: 'balanced', voiceEnabled: false });
   private listeners = new Set<() => void>();
@@ -112,6 +129,9 @@ export class Controller {
   /** Last few comments reacted to on this Short + what ScrollMate said, sent as context. RAM only, per Short. */
   private commentHistory: PreviousComment[] = [];
   private commentsPaused = false; // settings/dragging take precedence over automatic movement
+  private gazeDwell = new ZoneDwell(300); // a zone must hold 0.3 s (gaze jitters)
+  private lastGazeAt = 0;
+  private lastEyeContact = 0;
 
   constructor(public env: Env, private host: HTMLElement) {}
 
@@ -133,6 +153,7 @@ export class Controller {
       const settings = { ...DEFAULT_SETTINGS, ...(r[SETTINGS_KEY] ?? {}) } as Settings;
       if (this.env === 'stage') Object.assign(settings, { demo: true, enabled: true });
       this.set({ settings, position: (r[posKey(this.env)] as Position) ?? null });
+      await this.loadGazeModelInfo();
     } catch {
       /* storage unavailable: defaults */
     }
@@ -155,6 +176,14 @@ export class Controller {
         if (m?.type === 'ACTIVE_TAB_GRANTED') this.set({ note: 'Screen frames allowed for this tab.' });
       });
     }
+    chrome.runtime.onMessage.addListener((m: TabMessage) => {
+      if (m?.type === 'USER_SIGNAL') this.onUserSignal(m.signal);
+      else if (m?.type === 'GAZE') this.onGaze(m.x, m.y);
+      else if (m?.type === 'GAZE_CALIBRATED') void this.loadGazeModelInfo().then(() => this.set({ note: 'Eye tracking calibrated ✓' }));
+      else if (m?.type === 'CAMERA_STATUS') this.onCameraStatus(m.state, m.detail);
+      return false;
+    });
+    if (this.state.settings.enabled && this.state.settings.userCam) this.startCamera();
     if (this.state.settings.demo && this.state.settings.enabled) this.startDemo();
     this.tickTimer = window.setInterval(() => this.tick(), 150); // fast enough to land faces on the moment
     this.tick();
@@ -179,6 +208,15 @@ export class Controller {
     chrome.storage.local.set({ [SETTINGS_KEY]: next }).catch(() => undefined);
 
     if (prev.enabled && !next.enabled) this.disable();
+    const camWas = prev.enabled && prev.userCam;
+    const camIs = next.enabled && next.userCam;
+    if (!camWas && camIs) this.startCamera();
+    if (camWas && !camIs) this.stopCamera();
+    if (camWas && camIs && prev.eyeTrack !== next.eyeTrack) {
+      sendBg({ type: 'GAZE_ENABLE', enabled: next.eyeTrack }).catch(() => undefined);
+      if (!next.eyeTrack) this.clearGaze();
+    }
+    if (!prev.eyeTrack && next.eyeTrack && !this.state.gaze.calibrated) this.openGazeCalibration();
     if (!prev.voice && next.voice === false) this.speaker.cancel();
     if (prev.voice && !next.voice) this.speaker.cancel();
     const demoWasOn = prev.demo && prev.enabled;
@@ -311,6 +349,138 @@ export class Controller {
   }
 
   /** Stop all processing immediately. */
+  // ---------- webcam (opt-in, on-device MediaPipe; only labels arrive here) ----------
+  private startCamera() {
+    this.set({ camera: 'starting' });
+    sendBg({ type: 'CAMERA_START', gaze: this.state.settings.eyeTrack }).catch(() => this.set({ camera: 'error' }));
+  }
+
+  private stopCamera() {
+    sendBg({ type: 'CAMERA_STOP' }).catch(() => undefined);
+    this.set({ camera: 'off', user: null });
+    this.clearGaze();
+  }
+
+  // ---------- eye tracking (opt-in; the model runs in the camera page, only screen points arrive) ----------
+  openGazeCalibration() {
+    sendBg({ type: 'OPEN_GAZE_CALIBRATION' }).catch(() => undefined);
+    this.set({ note: 'Calibrate in the tab that opened (about 30 s), then come back.' });
+  }
+
+  private async loadGazeModelInfo() {
+    let m: GazeModelData | undefined;
+    try {
+      m = (await chrome.storage.local.get(GAZE_MODEL_KEY))[GAZE_MODEL_KEY] as GazeModelData | undefined;
+    } catch {
+      m = undefined;
+    }
+    this.set({ gaze: { ...this.state.gaze, calibrated: !!m, error: m?.error ?? null } });
+  }
+
+  private clearGaze() {
+    this.gazeDwell.reset();
+    if (this.state.gaze.zone || this.state.gaze.look) this.set({ gaze: { ...this.state.gaze, zone: null, look: null } });
+  }
+
+  private gazeActive(): boolean {
+    const st = this.state.settings;
+    return st.enabled && st.userCam && st.eyeTrack && this.state.camera === 'on' && Date.now() - this.lastGazeAt < 1500;
+  }
+
+  private zoneRects() {
+    const vis = (el: Element | null | undefined): Rect | null => {
+      const r = el?.getBoundingClientRect();
+      if (!r || r.width < 10 || r.height < 10 || r.right < 0 || r.left > window.innerWidth) return null;
+      return { x: r.left, y: r.top, width: r.width, height: r.height };
+    };
+    const panels = Array.from(document.querySelectorAll(PANEL)).map(vis).filter((r): r is Rect => !!r);
+    return {
+      video: vis(this.watcher?.video),
+      comments: panels.sort((a, b) => b.width * b.height - a.width * a.height)[0] ?? null,
+      mochi: vis(this.host.shadowRoot?.querySelector('.sm-companion')),
+    };
+  }
+
+  private onGaze(fx: number, fy: number) {
+    if (!this.state.settings.eyeTrack || !this.state.settings.userCam) return;
+    const now = Date.now();
+    this.lastGazeAt = now;
+    const scr = screen as Screen & { availLeft?: number };
+    const p = screenToViewport({ x: fx, y: fy }, window, { width: scr.width, height: scr.height, left: scr.availLeft ?? 0, top: 0 });
+    const raw = gazeZone(p, this.zoneRects(), { w: window.innerWidth, h: window.innerHeight }, this.gazeDwell.zone);
+    const changed = this.gazeDwell.update(raw, now);
+    const videoId = this.demo ? this.demo.short.videoId : this.watcher?.currentId;
+    if (changed) {
+      this.set({ gaze: { ...this.state.gaze, zone: changed } });
+      this.emit({ type: 'user', videoId: videoId ?? null, gazeZone: changed });
+      console.log(LOG, 'gaze zone:', changed);
+    }
+    this.updateLook(p);
+    // Eye contact: looking at Mochi for 0.7 s -> a happy face back (a face, never a bubble), at most every 15 s.
+    if (
+      this.gazeDwell.zone === 'mochi' && now - this.gazeDwell.since > 700 && now - this.lastEyeContact > 15_000 &&
+      videoId && !this.state.bubble && !this.state.commentVisit && this.state.settings.enabled
+    ) {
+      this.lastEyeContact = now;
+      this.cues.fireNow(videoId, 'happy', 0.8, this.snapshot().currentTime, now);
+      this.emit({ type: 'user', videoId, gazeZone: 'mochi', eyeContact: true });
+      console.log(LOG, 'eye contact: smiling back');
+    }
+  }
+
+  /**
+   * Mochi's eyes follow yours: it looks toward the point you're looking at (shared attention), and straight
+   * back at you when you look at it. Direction is -1..1, quantised so React only re-renders on a real change.
+   */
+  private updateLook(p: { x: number; y: number }) {
+    const el = this.host.shadowRoot?.querySelector('.sm-companion');
+    const r = el?.getBoundingClientRect();
+    if (!r) return;
+    let look = { x: 0, y: 0 };
+    if (this.gazeDwell.zone !== 'mochi') {
+      const dx = p.x - (r.left + r.width / 2), dy = p.y - (r.top + r.height / 2);
+      const dist = Math.hypot(dx, dy) || 1;
+      const reach = Math.min(1, dist / 350); // far away = eyes all the way over
+      const q = (v: number) => Math.round(v * 4) / 4;
+      look = { x: q((dx / dist) * reach), y: q((dy / dist) * reach) };
+    }
+    const cur = this.state.gaze.look;
+    if (!cur || cur.x !== look.x || cur.y !== look.y) this.set({ gaze: { ...this.state.gaze, look } });
+  }
+
+  private userFlags(): { userAway: boolean; userLaughing: boolean; userReadingComments: boolean; userEyesElsewhere: boolean } {
+    const u = this.state.settings.userCam && this.state.camera === 'on' ? this.state.user : null;
+    const zone = this.gazeActive() ? this.gazeDwell.zone : null;
+    return {
+      userAway: (!!u && (u.lookingAway || !u.present)) || zone === 'off_screen',
+      userLaughing: !!u && u.expression === 'laughing',
+      userReadingComments: zone === 'comments', // eyes on the comment panel: video reactions wait
+      userEyesElsewhere: zone === 'elsewhere', // eyes on another part of the page: wait until they're free
+    };
+  }
+
+  private onUserSignal(sig: UserSignal) {
+    const prev = this.state.user;
+    this.set({ user: sig });
+    this.emit({ type: 'user', expression: sig.expression, present: sig.present, lookingAway: sig.lookingAway });
+    if (!this.state.settings.enabled || !this.state.settings.userCam) return;
+    // Mirror the viewer: laugh along, look surprised with them (a face, never a bubble).
+    const mirror = USER_TO_EMOTION[sig.expression];
+    const videoId = this.demo ? this.demo.short.videoId : this.watcher?.currentId;
+    if (mirror && videoId && sig.expression !== prev?.expression && !this.state.bubble) {
+      this.cues.fireNow(videoId, mirror, Math.max(0.6, sig.strength), this.snapshot().currentTime, Date.now());
+      console.log(LOG, 'mirroring you:', sig.expression);
+    }
+    this.tick();
+  }
+
+  private onCameraStatus(state: CameraState, detail?: string) {
+    this.set({ camera: state });
+    if (state === 'needs_permission') this.set({ note: 'Allow the camera in the tab that just opened, then come back.' });
+    else if (state === 'error') this.set({ note: `Camera unavailable (${(detail ?? '').slice(0, 80)}).` });
+    else if (state === 'on' && !detail) this.set({ note: 'Camera on — processed on this computer only.' });
+  }
+
   private disable() {
     this.epoch++;
     this.cancelCommentVisit();
@@ -322,6 +492,7 @@ export class Controller {
     this.busy = 0;
     this.ctx = null;
     this.stopDemo();
+    if (this.state.camera !== 'off') this.stopCamera();
     sendBg({ type: 'CANCEL_ALL' }).catch(() => undefined);
     console.log(LOG, 'disabled: all processing stopped');
   }
@@ -415,6 +586,7 @@ export class Controller {
         muted: false,
         audioQuiet: true, // the demo has no soundtrack
         navTimes: this.navTimes,
+        ...this.userFlags(),
       };
     }
     const v = this.watcher?.video ?? null;
@@ -434,6 +606,7 @@ export class Controller {
       commentRequestId: this.commentAttempt?.requestId ?? null,
       commentReady: this.state.commentVisit?.phase !== 'running',
       readingComments: !!this.commentAttempt || !!this.state.commentHint,
+      ...this.userFlags(),
     };
   }
 
@@ -478,7 +651,10 @@ export class Controller {
   // ---------- delivery ----------
   private deliver(d: Delivery) {
     console.log(LOG, 'DELIVER', d.mode, `"${d.candidate.text}"`, '-', d.reason);
-    this.emit({ type: 'delivered', videoId: d.candidate.targetVideoId, text: d.candidate.text, mode: d.mode, reason: d.reason });
+    this.emit({
+      type: 'delivered', videoId: d.candidate.targetVideoId, text: d.candidate.text, mode: d.mode, reason: d.reason,
+      gazeZone: this.gazeActive() ? this.gazeDwell.zone : null, // where your eyes were when it spoke
+    });
     window.clearTimeout(this.bubbleTimer);
     this.set({ bubble: { id: d.candidate.id, text: d.candidate.text, commentRequestId: d.candidate.commentRequestId } });
     const linger = Math.min(8000, Math.max(4000, d.candidate.text.length * 75));

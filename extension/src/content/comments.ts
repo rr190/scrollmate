@@ -29,7 +29,7 @@ export function commentPosition(target: CommentTarget, width: number, height: nu
 
 const TEXT = '#content-text, .yt-core-attributed-string#content-text';
 const COMMENT = 'ytd-comment-view-model, ytd-comment-renderer';
-const PANEL = 'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-comments-section"], ytd-comments';
+export const PANEL = 'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-comments-section"], ytd-comments';
 const normalize = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 function commentTextAt(el: Element | null): HTMLElement | null {

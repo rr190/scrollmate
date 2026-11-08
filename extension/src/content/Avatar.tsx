@@ -13,6 +13,13 @@ export function avatarAspect(kind: AvatarKind): number {
   return AVATARS.find((a) => a.id === kind)?.aspect ?? 0.91;
 }
 
-export function Avatar({ kind, mood }: { kind: AvatarKind; mood: Mood }) {
-  return kind === 'scrollmate' ? <ScrollMateCharacter mood={mood} /> : <MochiCharacter mood={mood} />;
+/** `look`: where the viewer is looking relative to the character, -1..1 per axis (eye tracking), or null. */
+export function Avatar({ kind, mood, look = null }: { kind: AvatarKind; mood: Mood; look?: { x: number; y: number } | null }) {
+  if (kind === 'scrollmate')
+    return (
+      <span className="sm-look" style={look ? { transform: `translate(${look.x * 3}px, ${look.y * 2}px)` } : undefined}>
+        <ScrollMateCharacter mood={mood} />
+      </span>
+    );
+  return <MochiCharacter mood={mood} look={look} />;
 }

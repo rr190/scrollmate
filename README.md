@@ -164,6 +164,24 @@ Both policies get exactly the same simulated reactions: frames at 10%, 50% and 8
 - **Caption step** (`POST /scrollmate/caption`): new visible caption lines are batched (at most one request every 4 s per Short) and sent to the fast text race. That runs alongside frame analysis. The answer can change the face straight away, and its reaction joins the timing engine's queue like any other. Most lines are ordinary and return nothing. This only works when CC is on.
 - **Backend:** every model output is validated by Pydantic through Instructor. Any failure, timeout or unsafe line becomes *no reaction*. Requests are rate limited per IP. The prompt explicitly requires a callback when remembered Shorts share a theme.
 
+## React to me 📷 (opt-in webcam)
+
+Mochi can react to **you**:
+- **Mirroring:** it laughs along when you laugh, and looks surprised (or sad) with you.
+- **Holding comments:** video comments are held while you're laughing or looking away. The timing engine adds `user_laughing` and `user_away` to its WAIT reasons.
+
+**How it works:**
+- Turn on **React to me 📷** in the character's settings. The first time, a ScrollMate tab opens and asks for camera access once.
+- A hidden extension page (`chrome.offscreen`) runs **MediaPipe Face Landmarker** on-device at about 10 fps (`src/camera/offscreen.ts`).
+- Its 52 blendshape scores and the head angle become a few labels (`src/shared/faceSignals.ts`): laughing, happy, surprised or sad, plus present and looking away.
+- **Only those labels** go to the character. No frames are stored or sent anywhere, and nothing goes to the backend. A 📷 badge on the character shows when the camera is on.
+
+**Setup:** `npm run setup:mediapipe` (once, in `extension/`) copies MediaPipe's wasm runtime and downloads `face_landmarker.task` into `public/mediapipe/`. That folder is git-ignored, about 30 MB. Then run `npm run build`.
+
+**Tests:**
+- `npm run test:face`: the expression and away rules.
+- `node scripts/test-face-pipeline.mjs`: runs the built camera page in headless Chrome with a **fake camera** and checks that MediaPipe loads, runs at about 10 fps, and reports "not in view". The fake camera has no face, so real expressions still need a manual check with your webcam.
+
 ## Emotions and avatars
 
 Click the character to choose an **avatar**:

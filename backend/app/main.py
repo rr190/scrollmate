@@ -170,6 +170,36 @@ async def ui():
     return FileResponse(_UI, media_type="text/html")
 
 
+# ---------- webcam test page: what MediaPipe Face Landmarker recognises (runs in the browser tab) ----------
+_EXT = Path(__file__).resolve().parents[2] / "extension"
+_FACE_FILES = {
+    # url name -> file on disk. MediaPipe runs in the page; nothing about the webcam reaches this server.
+    "vision_bundle.mjs": _EXT / "node_modules" / "@mediapipe" / "tasks-vision" / "vision_bundle.mjs",
+    "face_landmarker.task": _EXT / "public" / "mediapipe" / "face_landmarker.task",
+    "faceSignals.js": Path(__file__).resolve().parent / "static" / "faceSignals.js",  # built from extension/src/shared/faceSignals.ts
+}
+_FACE_TYPES = {".mjs": "text/javascript", ".js": "text/javascript", ".wasm": "application/wasm", ".task": "application/octet-stream"}
+
+
+@app.get("/ui/face", include_in_schema=False)
+async def ui_face():
+    return FileResponse(Path(__file__).resolve().parent / "static" / "face.html", media_type="text/html")
+
+
+@app.get("/ui/mediapipe/{name:path}", include_in_schema=False)
+async def ui_mediapipe(name: str):
+    if name.startswith("wasm/"):
+        base = (_EXT / "public" / "mediapipe" / "wasm").resolve()
+        path = (base / name.removeprefix("wasm/")).resolve()
+        if base not in path.parents:
+            raise HTTPException(404)
+    else:
+        path = _FACE_FILES.get(name)
+    if not path or not path.exists():
+        raise HTTPException(404, "MediaPipe files missing: run `npm run setup:mediapipe` and `npm run build` in extension/")
+    return FileResponse(path, media_type=_FACE_TYPES.get(path.suffix, "application/octet-stream"))
+
+
 @app.get("/scrollmate/emotions")
 async def emotions_catalog() -> dict:
     """The emotion catalog (ids, emoji, when to use, Mochi face) for /ui and tooling."""
@@ -835,7 +865,7 @@ async def ping_models() -> dict:
 
 
 # ---------- live feed (dev): extension events in, SSE out ----------
-_CLIENT_TYPES = {"short_started", "short_left", "frame", "decision", "delivered", "emotion", "status"}
+_CLIENT_TYPES = {"short_started", "short_left", "frame", "decision", "delivered", "emotion", "status", "user"}
 
 
 @app.post("/scrollmate/events")

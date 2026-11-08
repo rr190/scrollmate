@@ -48,6 +48,82 @@
       "runtimeArgs": ["tsx", "../eval/timing_eval.ts"],
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"]
+    },
+
+    // ---------- webcam ("React to me 📷", MediaPipe Face Landmarker) ----------
+    {
+      // One-time after `npm install` (or a fresh clone): copies MediaPipe wasm + downloads face_landmarker.task.
+      "name": "Setup MediaPipe (one-time)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/extension",
+      "program": "${workspaceFolder}/extension/scripts/setup-mediapipe.mjs",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Face signals unit tests",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/extension",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "--test", "tests/faceSignals.test.ts"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      // Runs the BUILT camera page in headless Chrome with Chrome's fake camera (no real webcam used).
+      "name": "Face pipeline test (fake camera)",
+      "type": "node",
+      "request": "launch",
+      "preLaunchTask": "build extension",
+      "cwd": "${workspaceFolder}/extension",
+      "program": "${workspaceFolder}/extension/scripts/test-face-pipeline.mjs",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+
+    // ---------- comments ----------
+    {
+      "name": "Comment tests (unit)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/extension",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "--test", "tests/comments.test.ts"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Comment tests (browser, headless Chrome)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/extension",
+      "program": "${workspaceFolder}/extension/scripts/test-comments-browser.mjs",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Backend comment tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "unittest",
+      "args": ["discover", "-s", "tests", "-p", "test_comments.py", "-v"],
+      "cwd": "${workspaceFolder}/backend",
+      "python": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "console": "integratedTerminal"
+    },
+
+    // ---------- emotions ----------
+    {
+      // Backend catalog == extension list, and both avatars (Mochi + ScrollMate) draw every emotion.
+      "name": "Check emotions (backend, extension, avatars)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/scripts/check_emotions.py",
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "console": "integratedTerminal"
     }
   ],
   "compounds": [
@@ -55,6 +131,19 @@
       "name": "ScrollMate: Backend + Chrome",
       "configurations": ["Backend (FastAPI, debug)", "Chrome + extension (YouTube Shorts)"],
       "stopAll": true
+    },
+    {
+      // Every automated check at once (no API keys or real webcam needed).
+      "name": "ScrollMate: All tests",
+      "configurations": [
+        "Face signals unit tests",
+        "Face pipeline test (fake camera)",
+        "Comment tests (unit)",
+        "Comment tests (browser, headless Chrome)",
+        "Backend comment tests",
+        "Check emotions (backend, extension, avatars)",
+        "Timing eval"
+      ]
     }
   ]
 }

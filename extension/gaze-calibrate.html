@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ScrollMate eye calibration</title>
+    <style>
+      :root { color-scheme: light dark; --bg: #f7f5fb; --fg: #251d33; --muted: #6c6380; --accent: #7c5ce0; --ok: #1f9d55; --warn: #c27c0e; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #15121c; --fg: #efeaf7; --muted: #a69cb8; --accent: #a58bff; --ok: #4cd18b; --warn: #f0b44c; } }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
+        font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; padding: 16px; }
+      main { max-width: 480px; width: 100%; }
+      h1 { font-size: 20px; margin: 0 0 8px; }
+      p, li { color: var(--muted); }
+      button, select { margin-top: 12px; padding: 10px 16px; border: 0; border-radius: 10px; background: var(--accent); color: #fff;
+        font: inherit; font-weight: 700; cursor: pointer; }
+      select { background: transparent; color: var(--fg); border: 1px solid var(--muted); font-weight: 400; }
+      button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--muted); }
+      button:disabled { opacity: 0.6; cursor: default; }
+      #msg { color: var(--fg); font-weight: 600; min-height: 1.5em; }
+      .good { color: var(--ok) !important; } .meh { color: var(--warn) !important; }
+      #stage { position: fixed; inset: 0; background: #0d0b12; display: none; z-index: 10; cursor: none; }
+      #stage .dot { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; background: #ff5c8a;
+        box-shadow: 0 0 0 4px #ff5c8a55; transition: left .35s ease, top .35s ease; }
+      #stage .dot.pulse { animation: pulse 1s ease-in-out infinite; }
+      #stage .dot.collect { background: #4cd18b; box-shadow: 0 0 0 4px #4cd18b55; }
+      #stage .gaze { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: #3b82f6cc; display: none; }
+      #stage .half { position: absolute; top: 0; bottom: 0; width: 50%; display: none; align-items: center; justify-content: center;
+        font: 700 28px/1.2 system-ui; color: #ffffff40; }
+      #stage .half.on { background: #3b82f622; color: #ffffffcc; }
+      #smsg { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); color: #fff; font-size: 17px; text-align: center; width: 90%; }
+      @keyframes pulse { 50% { transform: scale(1.5); } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Teach ScrollMate where you look 👀</h1>
+      <p>Look at each dot until it turns green. It takes about 30 seconds. Then Mochi knows whether you're watching the video, reading comments or looking at it.</p>
+      <ul>
+        <li>Use the <b>same screen</b> you watch Shorts on, and sit how you normally sit.</li>
+        <li>Keep your head still and your face evenly lit (light in front of you, not behind).</li>
+        <li>Everything runs <b>on this computer</b>. Only the finished personal model (numbers, no images) is saved, in this browser.</li>
+      </ul>
+      <select id="mode" aria-label="Number of dots">
+        <option value="12">12 dots (~30 s)</option>
+        <option value="25">25 dots (~50 s, more accurate)</option>
+      </select>
+      <button id="start">Start calibration</button>
+      <p id="msg"></p>
+      <div id="after" hidden>
+        <button id="test" class="ghost">Test left / right</button>
+        <button id="close" class="ghost">Done, close this tab</button>
+      </div>
+    </main>
+    <div id="stage">
+      <div class="half" id="hl" style="left:0">look here</div>
+      <div class="half" id="hr" style="right:0">or here</div>
+      <div class="dot" id="dot"></div>
+      <div class="gaze" id="gz"></div>
+      <div id="smsg"></div>
+    </div>
+    <script type="module" src="./src/camera/calibrate.ts"></script>
+  </body>
+</html>

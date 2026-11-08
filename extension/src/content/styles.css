@@ -618,6 +618,13 @@
 .sm-face {
   transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+/* eye tracking: the ScrollMate avatar leans toward where you look */
+.sm-look {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
 .sm-blush {
   transition: opacity 0.4s ease;
 }
@@ -696,7 +703,7 @@
     animation: none !important;
   }
   .sm-fx { opacity: 1 !important; }
-  .sm-sprout, .sm-face { transition: none !important; }
+  .sm-sprout, .sm-face, .sm-look { transition: none !important; }
 }
 
 /* avatar picker (popover) */
@@ -742,4 +749,17 @@
 .sm-avatar-opt .sm-hint {
   text-align: center;
   font-size: 10.5px;
+}
+
+/* webcam on (opt-in) */
+.sm-cam-badge {
+  position: absolute;
+  left: 4%;
+  bottom: 4%;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }

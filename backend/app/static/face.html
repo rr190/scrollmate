@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Webcam Expression Test</title>
+<style>
+  :root {
+    --bg: #f7f5fb; --panel: #ffffff; --ink: #251d33; --muted: #6c6380; --line: #e6e0f0;
+    --accent: #7c5ce0; --accent-soft: #efe9ff; --good: #1f9d5c; --bad: #d23b4b; --warn: #c27a00; --code: #f3f0f8; --rest: #9a92aa;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #15121c; --panel: #1f1a29; --ink: #efeaf7; --muted: #a69cb8; --line: #332b42;
+      --accent: #a58bff; --accent-soft: #2c2440; --good: #4cd18b; --bad: #ff6b7a; --warn: #f0b35a; --code: #191522; --rest: #7d748f; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --bg: #15121c; --panel: #1f1a29; --ink: #efeaf7; --muted: #a69cb8; --line: #332b42;
+    --accent: #a58bff; --accent-soft: #2c2440; --good: #4cd18b; --bad: #ff6b7a; --warn: #f0b35a; --code: #191522; --rest: #7d748f; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  header a { color: var(--accent); font-weight: 600; text-decoration: none; }
+  .k { color: var(--muted); font-size: 12.5px; }
+  main { display: grid; gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+  button { border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 700; cursor: pointer; }
+  button.ghost { background: var(--panel); color: var(--ink); border-color: var(--line); }
+  button.small { padding: 4px 10px; font-size: 12.5px; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .cam { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 10px; overflow: hidden; margin-top: 12px; }
+  .cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  .cam .empty { position: absolute; inset: 0; display: grid; place-items: center; color: #bbb; text-align: center; padding: 16px; }
+  .big { display: flex; align-items: center; gap: 14px; }
+  .big .emoji { font-size: 56px; line-height: 1; }
+  .big .label { font-size: 26px; font-weight: 800; text-transform: capitalize; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--code); color: var(--muted); }
+  .chip.on { background: var(--accent-soft); color: var(--accent); }
+  .chip.warn { background: #fff1d6; color: #8a5a00; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chip.warn { background: #3d2e10; color: #f0b35a; } }
+  .mochi { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--code); }
+  .bars { display: grid; gap: 9px; }
+  .bar { display: grid; grid-template-columns: 112px 1fr 92px; gap: 8px; align-items: center; font-size: 12.5px; }
+  .bar .track { position: relative; height: 12px; border-radius: 6px; background: var(--code); }
+  .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; background: var(--accent); width: 0; transition: width .08s linear; }
+  .bar .fill.hot { background: var(--good); }
+  .bar .mark { position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 1px; }
+  .bar .mark.rest { background: var(--rest); }
+  .bar .mark.trig { background: var(--warn); }
+  .bar .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 2px 0 10px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+  dt { color: var(--muted); font-size: 12.5px; } dd { margin: 0; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  .err { color: var(--bad); font-weight: 600; margin-top: 8px; }
+  .wide { grid-column: 1 / -1; }
+  /* eye tracking */
+  .gaze-wrap { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 720px) { .gaze-wrap { grid-template-columns: 1fr; } }
+  .screen { position: relative; width: 100%; aspect-ratio: 16 / 10; border-radius: 10px; background: var(--code); border: 1px solid var(--line); overflow: hidden; }
+  .screen .cell { position: absolute; border: 1px dashed var(--line); display: grid; place-items: center; font-size: 11px; color: var(--muted); }
+  .screen .cell.hot { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+  .gdot { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: #ff4f7b;
+    box-shadow: 0 0 0 4px rgba(255, 79, 123, .25); transition: left .06s linear, top .06s linear; pointer-events: none; }
+  #pageDot { position: fixed; z-index: 50; display: none; }
+  #calib { position: fixed; inset: 0; z-index: 100; background: rgba(12, 9, 18, .92); display: none; color: #fff; }
+  #calib .msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, 70px); text-align: center; font-size: 15px; max-width: 420px; padding: 0 16px; }
+  #calib .target { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; background: #ffd23f; transition: background .15s;
+    box-shadow: 0 0 0 6px rgba(255, 210, 63, .25); }
+  #calib .tdot { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; background: #2fd36b; }
+  #calib .tdot.gaze { width: 20px; height: 20px; margin: -10px 0 0 -10px; background: #3b82f6; }
+  #calib .target.collect { background: #4cd18b; box-shadow: 0 0 0 6px rgba(76, 209, 139, .3); }
+  #calib .target::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: #111; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📷 Webcam expression &amp; eye tracking test</h1>
+  <span class="k" id="status">Camera off</span>
+  <span style="flex:1"></span>
+  <a href="/ui">← Backend playground</a>
+</header>
+
+<main>
+  <section>
+    <h2>Your camera</h2>
+    <div class="k">MediaPipe Face Landmarker runs <b>in this browser tab</b>. No video or images are sent to the backend or stored.</div>
+    <div class="row">
+      <button id="start">Start camera</button>
+      <button id="stop" class="ghost" disabled>Stop</button>
+      <label class="k" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="dots" checked> draw face landmarks</label>
+    </div>
+    <div class="cam">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <div class="empty" id="empty">Click “Start camera”, keep a neutral face for 2 seconds, then smile, laugh, frown, look surprised or turn away.</div>
+    </div>
+    <div id="err" class="err" hidden></div>
+  </section>
+
+  <section>
+    <h2>What it recognises</h2>
+    <div class="big"><span class="emoji" id="emoji">😐</span><div><div class="label" id="label">—</div><div class="k">Steadied result (must hold 0.25 s), same rules as the extension</div></div></div>
+    <div class="chips">
+      <span class="chip" id="cBase">neutral face: —</span>
+      <span class="chip" id="cPresent">face: —</span>
+      <span class="chip" id="cAway">looking: —</span>
+      <span class="chip" id="cRaw">this frame: —</span>
+      <span class="chip" id="cFps">— fps</span>
+    </div>
+    <div class="mochi"><b>Mochi would:</b> <span id="mochi">—</span></div>
+    <h2 style="margin-top:14px">Head angle</h2>
+    <dl>
+      <dt>Turn left/right (yaw)</dt><dd id="yaw">—</dd>
+      <dt>Tilt up/down (pitch)</dt><dd id="pitch">—</dd>
+      <dt>“Away” after</dt><dd>&gt; 28° for 1.2 s, or no face for 1.2 s</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Face scores <button class="ghost small" id="relearn" disabled>Re-learn my neutral face</button></h2>
+    <div class="legend"><span><i style="background:var(--rest)"></i>your resting value</span><span><i style="background:var(--warn)"></i>triggers here (rest + threshold)</span><span><i style="background:var(--good)"></i>bar past its trigger</span></div>
+    <div class="bars" id="bars"></div>
+    <div class="k" style="margin-top:10px">Sad = a frown past its trigger <i>with</i> raised inner brows, or a clearly stronger frown on its own (+0.30 over rest), while not smiling.</div>
+  </section>
+
+  <section>
+    <h2>Changes</h2>
+    <div class="k">Only when the steadied result changes (this is what the extension would send to Mochi).</div>
+    <table><thead><tr><th>Time</th><th>Expression</th><th>Face</th><th>Looking</th><th>Strength</th></tr></thead><tbody id="log"></tbody></table>
+  </section>
+
+  <section class="wide">
+    <h2>👀 Eye tracking <span class="k" id="gStatus" style="font-weight:400">not calibrated: rough estimate</span></h2>
+    <div class="gaze-wrap">
+      <div>
+        <div class="screen" id="screen"><div class="gdot" id="gdot" hidden></div></div>
+        <div class="row">
+          <select id="gMode" aria-label="Calibration points" style="padding:7px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit">
+            <option value="nine">9 dots (12 with bottom boost, ~25 s)</option>
+            <option value="dense">25 dots (~50 s, more accurate)</option>
+          </select>
+          <button id="calibrate" disabled>Calibrate</button>
+          <button id="tune" class="ghost" disabled title="EyeTrax KalmanSmoother.tune: 3 dots, sets the smoothing from how much your gaze jitters">Fine-tune smoothing (3 dots)</button>
+          <button id="uncal" class="ghost" disabled>Clear calibration</button>
+          <label class="k" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pageDotOn"> show my gaze over this whole page</label>
+        </div>
+        <div class="row">
+          <label class="k" style="display:flex;align-items:center;gap:6px">Smoothing
+            <select id="gFilter" style="padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit">
+              <option value="kalman_ema" selected>Kalman + EMA 0.25</option>
+              <option value="kalman">Kalman</option>
+              <option value="none">None</option>
+            </select></label>
+          <label class="k" style="display:flex;align-items:center;gap:6px" title="Not in EyeTrax: MediaPipe normalises x and y separately; this rescales x by the video's width/height. Re-calibrate after changing."><input type="checkbox" id="gAspect"> correct for camera aspect ratio (extra, not in EyeTrax)</label>
+          <label class="k" style="display:flex;align-items:center;gap:6px" title="Not in EyeTrax. Looking down droops your eyelids: EyeTrax's blink rule then throws those frames away and the iris is half hidden. This adds MediaPipe's eye-direction scores as features, only skips real blinks, and adds 3 extra low calibration dots (9-dot mode). Re-calibrate after changing."><input type="checkbox" id="gBoost" checked> bottom-of-screen boost (extra, not in EyeTrax)</label>
+        </div>
+        <div class="k" style="margin-top:8px">Same method as <a href="https://github.com/ck-zhang/EyeTrax" target="_blank" rel="noopener">EyeTrax</a> (MIT): its 161 eye/face landmarks (486 values) in a head-centred frame, StandardScaler + Ridge(alpha 1), 9-dot calibration, blink rejection, Kalman / Kalman+EMA and its 3-dot fine-tune, at ~30 fps. Keep your head still and your face evenly lit; re-calibrate if you move your laptop or chair.</div>
+      </div>
+      <dl>
+        <dt>Looking at</dt><dd id="gRegion">—</dd>
+        <dt>Screen point</dt><dd id="gPoint">—</dd>
+        <dt>Iris in eye (x, y)</dt><dd id="gIris">—</dd>
+        <dt>Eyes</dt><dd id="gBlink">—</dd>
+        <dt>Calibration error</dt><dd id="gErr">—</dd>
+        <dt>Smoothing tune</dt><dd id="gTune">—</dd>
+        <dt>Accuracy to expect</dt><dd>Webcam gaze is still coarse after calibration: reliable for regions (video vs comments, left / centre / right), not individual words.</dd>
+      </dl>
+    </div>
+  </section>
+</main>
+
+<div class="gdot" id="pageDot"></div>
+<div id="calib"><div class="target" id="ctarget"></div><div class="msg" id="cmsg"></div></div>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver, DrawingUtils } from '/ui/mediapipe/vision_bundle.mjs';
+import {
+  FaceSignalTracker, headAngles, features, THRESHOLDS as T,
+  irisPosition, uncalibratedGaze, GazeSmoother,
+  gazeFeatureVector, eyeAspectRatio, BlinkDetector, RidgeGaze, KalmanGaze, ninePointTargets, denseTargets,
+  fineTuneTargets, FINE_TUNE, varianceOf,
+  gazeFeatureVectorPlus, isRealBlink, bottomHeavyTargets,
+} from '/ui/mediapipe/faceSignals.js';
+
+const $ = (id) => document.getElementById(id);
+const EMOJI = { neutral: '😐', happy: '😊', laughing: '😂', surprised: '😮', sad: '😢' };
+const MOCHI = {
+  laughing: 'laugh along with you 😂, and hold its comments (you are laughing: not talking over you)',
+  happy: 'smile with you 😊', surprised: 'look surprised with you 😮', sad: 'look sad with you 😢', neutral: 'keep watching the video',
+};
+// Each bar = one feature the rules use, with the threshold (change over rest) that matters most for it.
+const BARS = [
+  ['smile', 'Smile', T.happySmile],
+  ['jaw', 'Jaw open', T.surpriseJaw],
+  ['browInner', 'Inner brows up', T.sadBrows],
+  ['browOuter', 'Outer brows up', T.surpriseBrows],
+  ['wide', 'Eyes wide', T.surpriseWide],
+  ['squint', 'Eyes squint', T.laughSquint],
+  ['frown', 'Frown', T.sadFrown],
+];
+$('bars').innerHTML = BARS.map(([k, name]) => `
+  <div class="bar"><span>${name}</span>
+    <span class="track"><span class="fill" id="f-${k}"></span><span class="mark rest" id="r-${k}"></span><span class="mark trig" id="t-${k}"></span></span>
+    <span class="v" id="v-${k}">—</span></div>`).join('');
+
+let landmarker = null, stream = null, timer = null, drawer = null;
+let tracker = new FaceSignalTracker();
+let frames = 0, fpsAt = performance.now();
+const video = $('video'), canvas = $('overlay'), ctx = canvas.getContext('2d');
+
+// ---------- gaze state ----------
+// EyeTrax-style: head-frame eye landmarks -> standardised ridge -> Kalman(+EMA); blinks ignored.
+const model = new RidgeGaze();
+const filters = { kalman: new KalmanGaze(50, 0.2, 0), kalman_ema: new KalmanGaze(50, 0.2, 0.25) }; // EyeTrax defaults
+const kalman = { // facade over the selected EyeTrax filter
+  step: (p) => ($('gFilter').value === 'none' ? p : filters[$('gFilter').value].step(p)),
+  reset: () => Object.values(filters).forEach((f) => f.reset()),
+  setMeasurementNoise: (x, y) => Object.values(filters).forEach((f) => f.setMeasurementNoise(x, y)),
+};
+let tuning = null; // EyeTrax fine-tune state
+const blink = new BlinkDetector();
+const rough = new GazeSmoother(0.3); // before calibration: simple iris estimate
+let calibSize = { w: window.innerWidth, h: window.innerHeight }; // pixels the model was trained in
+let samples = { X: [], Y: [] };
+let collecting = null; // { target(px), sampling } while a calibration dot is shown
+let lastFrame = { face: false, blink: false };
+let lastGaze = null;
+
+// screen map grid (3x3 regions)
+const COLS = ['left', 'centre', 'right'], ROWS = ['top', 'middle', 'bottom'];
+$('screen').insertAdjacentHTML('afterbegin', ROWS.flatMap((r, ri) => COLS.map((c, ci) =>
+  `<div class="cell" id="cell-${ri}-${ci}" style="left:${ci * 33.333}%;top:${ri * 33.333}%;width:33.333%;height:33.333%">${r} ${c}</div>`)).join(''));
+
+async function start() {
+  $('err').hidden = true;
+  $('start').disabled = true;
+  $('status').textContent = 'Starting…';
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+  } catch (e) {
+    return fail(`Camera not available: ${e.name}. Allow the camera for localhost in the address bar.`);
+  }
+  video.srcObject = stream;
+  await video.play();
+  $('empty').hidden = true;
+  if (!landmarker) {
+    $('status').textContent = 'Loading MediaPipe…';
+    try {
+      const files = await FilesetResolver.forVisionTasks('/ui/mediapipe/wasm');
+      const opts = (delegate) => ({
+        baseOptions: { modelAssetPath: '/ui/mediapipe/face_landmarker.task', delegate },
+        runningMode: 'VIDEO', numFaces: 1, outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true,
+      });
+      landmarker = await FaceLandmarker.createFromOptions(files, opts('GPU')).catch(() => FaceLandmarker.createFromOptions(files, opts('CPU')));
+    } catch (e) {
+      return fail(`MediaPipe failed to load: ${e.message}. Run "npm run setup:mediapipe" in extension/.`);
+    }
+  }
+  drawer = new DrawingUtils(ctx);
+  tracker = new FaceSignalTracker();
+  rough.reset(); kalman.reset();
+  $('status').textContent = 'Camera on (on this computer only)';
+  for (const id of ['stop', 'relearn', 'calibrate']) $(id).disabled = false;
+  timer = setInterval(step, 33); // ~30 fps: EyeTrax reads every camera frame (~30 samples per calibration dot)
+}
+
+function stop() {
+  clearInterval(timer);
+  stream?.getTracks().forEach((t) => t.stop());
+  stream = null;
+  video.srcObject = null;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  $('empty').hidden = false;
+  $('start').disabled = false;
+  for (const id of ['stop', 'relearn', 'calibrate']) $(id).disabled = true;
+  $('gdot').hidden = true;
+  $('pageDot').style.display = 'none';
+  $('status').textContent = 'Camera off';
+}
+
+function fail(msg) {
+  $('err').textContent = msg;
+  $('err').hidden = false;
+  $('start').disabled = false;
+  $('status').textContent = 'Camera off';
+}
+
+function step() {
+  if (!landmarker || video.readyState < 2) return;
+  const now = Date.now();
+  const res = landmarker.detectForVideo(video, performance.now());
+  frames++;
+  if (performance.now() - fpsAt > 1000) { $('cFps').textContent = `${frames} fps`; frames = 0; fpsAt = performance.now(); }
+  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const cats = res.faceBlendshapes?.[0]?.categories;
+  const lm = res.faceLandmarks?.[0];
+  let b = null, angles = { yawDeg: 0, pitchDeg: 0 };
+  if (cats?.length) {
+    b = Object.fromEntries(cats.map((c) => [c.categoryName, c.score]));
+    angles = headAngles(res.facialTransformationMatrixes?.[0]?.data);
+    if ($('dots').checked && lm) {
+      drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color: '#ffffff30', lineWidth: 0.5 });
+      drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LIPS, { color: '#ff7aa2', lineWidth: 1.5 });
+      drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW, { color: '#ffd23f', lineWidth: 1.5 });
+      drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW, { color: '#ffd23f', lineWidth: 1.5 });
+      drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LEFT_EYE, { color: '#8be9ff', lineWidth: 1.5 });
+      drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE, { color: '#8be9ff', lineWidth: 1.5 });
+      drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS, { color: '#4cd18b', lineWidth: 2 });
+      drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS, { color: '#4cd18b', lineWidth: 2 });
+    }
+  }
+
+  // expressions (exactly what the extension uses)
+  const changed = tracker.update({ blendshapes: b, ...angles }, now);
+  renderBars(b);
+  renderExpression(changed);
+  $('yaw').textContent = b ? `${angles.yawDeg.toFixed(0)}°` : '—';
+  $('pitch').textContent = b ? `${angles.pitchDeg.toFixed(0)}°` : '—';
+
+  // eye tracking
+  // EyeTrax uses MediaPipe's normalised coordinates as-is (aspect 1); the checkbox adds an aspect fix.
+  const aspect = $('gAspect').checked ? video.videoWidth / video.videoHeight || 4 / 3 : 1;
+  const iris = irisPosition(lm);
+  // "Bottom boost" (not in EyeTrax): + eye-direction blendshapes, and a blink must also close the lids
+  const boost = $('gBoost').checked;
+  const fv = boost ? gazeFeatureVectorPlus(lm, b, aspect) : gazeFeatureVector(lm, aspect);
+  const ear = eyeAspectRatio(lm, aspect);
+  const earBlink = ear !== null && blink.update(ear);
+  const blinking = boost ? isRealBlink(earBlink, b) : earBlink;
+  lastFrame = { face: !!fv, blink: blinking };
+  $('gBlink').textContent = !fv ? 'no face' : blinking ? 'blinking (frame ignored)' : `open (EAR ${ear.toFixed(2)})${earBlink ? ' · lids low (looking down), kept' : ''}`;
+  if (!fv || !iris) { $('gdot').hidden = true; $('pageDot').style.display = 'none'; $('gRegion').textContent = 'no face'; return; }
+  if (collecting && collecting.sampling && !blinking) {
+    samples.X.push(fv);
+    samples.Y.push(collecting.target);
+  }
+  if (blinking) return; // hold the last point through a blink
+  let g;
+  if (model.trained) {
+    const px = model.predict(fv);
+    if (tuning) tuneStep(px);
+    const k = kalman.step(px);
+    g = { x: k.x / calibSize.w, y: k.y / calibSize.h };
+  } else {
+    g = rough.push(uncalibratedGaze(iris, angles.yawDeg, angles.pitchDeg));
+  }
+  lastGaze = g;
+  renderGaze(g, iris);
+}
+
+function renderBars(b) {
+  const base = tracker.baseline;
+  $('cBase').textContent = base.ready ? 'neutral face: learned' : 'neutral face: learning… (look neutral)';
+  $('cBase').className = 'chip ' + (base.ready ? 'on' : 'warn');
+  const f = b ? features(b) : null;
+  for (const [k, , th] of BARS) {
+    const rest = base.value[k], trig = Math.min(1, rest + th), v = f ? f[k] : 0;
+    $('f-' + k).style.width = `${Math.round(v * 100)}%`;
+    $('f-' + k).classList.toggle('hot', !!f && v > trig);
+    $('r-' + k).style.left = `${rest * 100}%`;
+    $('t-' + k).style.left = `${trig * 100}%`;
+    $('v-' + k).textContent = f ? `${v.toFixed(2)} (rest ${rest.toFixed(2)})` : '—';
+  }
+}
+
+function renderExpression(changed) {
+  const s = tracker.current, raw = tracker.lastRaw;
+  $('cRaw').textContent = `this frame: ${raw ? raw.expression : 'no face'}`;
+  $('emoji').textContent = !s.present ? '🙈' : s.lookingAway ? '👀' : EMOJI[s.expression];
+  $('label').textContent = !s.present ? 'not in view' : s.lookingAway ? 'looking away' : s.expression;
+  $('cPresent').textContent = `face: ${s.present ? 'in view' : 'not in view'}`;
+  $('cPresent').className = 'chip ' + (s.present ? 'on' : 'warn');
+  $('cAway').textContent = `looking: ${s.lookingAway ? 'away' : 'at screen'}`;
+  $('cAway').className = 'chip ' + (s.lookingAway ? 'warn' : 'on');
+  $('mochi').textContent = !s.present || s.lookingAway ? 'hold its comments until you are back (you looked away)' : MOCHI[s.expression];
+  if (changed) {
+    const row = document.createElement('tr');
+    row.innerHTML = `<td>${new Date().toLocaleTimeString([], { hour12: false })}</td><td>${EMOJI[s.expression]} ${s.expression}</td>
+      <td>${s.present ? 'in view' : 'not in view'}</td><td>${s.lookingAway ? 'away' : 'screen'}</td><td>${s.strength.toFixed(2)}</td>`;
+    $('log').prepend(row);
+    while ($('log').children.length > 15) $('log').lastChild.remove();
+  }
+}
+
+function renderGaze(g, iris) {
+  const off = g.x < -0.02 || g.x > 1.02 || g.y < -0.02 || g.y > 1.02;
+  const cx = Math.max(0, Math.min(2, Math.floor(g.x * 3))), cy = Math.max(0, Math.min(2, Math.floor(g.y * 3)));
+  document.querySelectorAll('#screen .cell').forEach((c) => c.classList.remove('hot'));
+  if (!off) $(`cell-${cy}-${cx}`).classList.add('hot');
+  $('gRegion').textContent = off ? 'off the screen' : `${ROWS[cy]} ${COLS[cx]}`;
+  $('gPoint').textContent = `x ${(g.x * 100).toFixed(0)}%, y ${(g.y * 100).toFixed(0)}%`;
+  $('gIris').textContent = `${iris.x.toFixed(2)}, ${iris.y.toFixed(2)}`;
+  const dot = $('gdot');
+  dot.hidden = false;
+  dot.style.left = `${Math.max(0, Math.min(1, g.x)) * 100}%`;
+  dot.style.top = `${Math.max(0, Math.min(1, g.y)) * 100}%`;
+  const pd = $('pageDot');
+  if ($('pageDotOn').checked && !collecting) {
+    pd.style.display = 'block';
+    pd.style.left = `${Math.max(0, Math.min(1, g.x)) * window.innerWidth}px`;
+    pd.style.top = `${Math.max(0, Math.min(1, g.y)) * window.innerHeight}px`;
+  } else pd.style.display = 'none';
+}
+
+// ---------- calibration (EyeTrax procedure): wait for a steady face, then per dot 1 s pulse + 1 s capture ----------
+async function calibrate() {
+  const overlay = $('calib'), target = $('ctarget'), msg = $('cmsg');
+  const dense = $('gMode').value === 'dense';
+  const pts = dense ? denseTargets(5, 0.1) : $('gBoost').checked ? bottomHeavyTargets(0.1) : ninePointTargets(0.1);
+  const pulseMs = dense ? 900 : 1000, captureMs = dense ? 900 : 1000;
+  let cancelled = false;
+  const onKey = (e) => { if (e.key === 'Escape') cancelled = true; };
+  window.addEventListener('keydown', onKey);
+  overlay.style.display = 'block';
+  try { await document.documentElement.requestFullscreen?.(); } catch { /* optional */ }
+  await wait(300);
+  calibSize = { w: window.innerWidth, h: window.innerHeight };
+  samples = { X: [], Y: [] };
+  // 1) steady face for 2 s (face visible, not blinking)
+  target.style.left = '50%'; target.style.top = '50%'; target.classList.remove('collect');
+  msg.style.top = '50%';
+  let steadySince = null;
+  while (!cancelled && stream) {
+    const ok = lastFrame.face && !lastFrame.blink;
+    steadySince = ok ? (steadySince ?? performance.now()) : null;
+    const held = steadySince ? (performance.now() - steadySince) / 2000 : 0;
+    msg.textContent = ok ? `Hold still… ${Math.ceil((1 - held) * 2)}` : 'Face not detected: sit facing the camera';
+    if (held >= 1) break;
+    await wait(50);
+  }
+  msg.textContent = 'Follow the dot with your eyes, keep your head still. Esc to cancel.';
+  // 2) dots: pulse (eyes land, ignored) then capture
+  for (const p of pts) {
+    if (cancelled || !stream) break;
+    const px = { x: p.x * calibSize.w, y: p.y * calibSize.h };
+    target.style.left = `${px.x}px`; target.style.top = `${px.y}px`;
+    msg.style.top = p.y > 0.6 ? '20%' : '50%';
+    target.classList.remove('collect');
+    collecting = { target: px, sampling: false };
+    const t0 = performance.now();
+    while (performance.now() - t0 < pulseMs) { // pulsing ring, like EyeTrax
+      const e = (performance.now() - t0) / 1000;
+      target.style.transform = `scale(${1 + 0.5 * Math.abs(Math.sin(2 * Math.PI * e))})`;
+      await wait(16);
+    }
+    target.style.transform = '';
+    target.classList.add('collect');
+    collecting.sampling = true;
+    await wait(captureMs);
+    collecting = null;
+  }
+  window.removeEventListener('keydown', onKey);
+  overlay.style.display = 'none';
+  if (document.fullscreenElement) document.exitFullscreen?.();
+  if (cancelled) { $('gStatus').textContent = 'calibration cancelled'; return; }
+  // 3) fit ridge (alpha 1) and set the Kalman measurement noise from the model's own residuals
+  if (!model.fit(samples.X, samples.Y, 1.0)) { $('gStatus').textContent = 'calibration failed (too few frames: face visible?)'; return; }
+  let ex = 0, ey = 0, err = 0;
+  samples.X.forEach((f, i) => {
+    const q = model.predict(f), t = samples.Y[i];
+    ex += (q.x - t.x) ** 2; ey += (q.y - t.y) ** 2; err += Math.hypot(q.x - t.x, q.y - t.y);
+  });
+  const n = samples.X.length;
+  kalman.setMeasurementNoise(0.2, 0.2); // EyeTrax default until "Fine-tune smoothing" (tune) is run
+  kalman.reset();
+  const diag = Math.hypot(calibSize.w, calibSize.h);
+  $('gErr').textContent = `${Math.round(err / n)} px average (${((err / n / diag) * 100).toFixed(1)}% of the screen diagonal), ${n} frames, ${pts.length} dots`;
+  $('gStatus').textContent = `calibrated with ${pts.length} dots (EyeTrax method)`;
+  $('uncal').disabled = false;
+  $('tune').disabled = false;
+  $('gTune').textContent = 'not tuned (Kalman measurement noise 0.2: barely smooths)';
+}
+
+// ---------- EyeTrax KalmanSmoother.tune(): 3 dots; look at each until it disappears ----------
+function tune() {
+  if (!model.trained) return;
+  const w = calibSize.w, h = calibSize.h;
+  tuning = {
+    points: fineTuneTargets(w, h).map((pos) => ({ pos, start: null, collecting: false, collStart: null, gaze: [] })),
+    all: [],
+    prox: w * FINE_TUNE.proximityOfWidth,
+  };
+  $('calib').style.display = 'block';
+  $('ctarget').style.display = 'none';
+  $('cmsg').style.top = '86%';
+  $('cmsg').textContent = 'Look at the points until they disappear (Esc to cancel)';
+  drawTune(null);
+  document.documentElement.requestFullscreen?.().catch(() => {});
+}
+
+function tuneStep(px) {
+  const now = performance.now();
+  for (const pt of [...tuning.points]) {
+    if (Math.hypot(px.x - pt.pos.x, px.y - pt.pos.y) <= tuning.prox) {
+      pt.start ??= now;
+      if (!pt.collecting && now - pt.start >= FINE_TUNE.initialDelayMs) { pt.collecting = true; pt.collStart = now; }
+      if (pt.collecting) {
+        pt.gaze.push({ x: Math.round(px.x), y: Math.round(px.y) });
+        if (now - pt.collStart >= FINE_TUNE.collectMs) {
+          tuning.all.push(...pt.gaze);
+          tuning.points.splice(tuning.points.indexOf(pt), 1);
+        }
+      }
+    } else {
+      Object.assign(pt, { start: null, collecting: false, collStart: null, gaze: [] }); // looked away: restart this point
+    }
+  }
+  drawTune(px);
+  if (!tuning.points.length) finishTune();
+}
+
+function drawTune(px) {
+  const layer = $('calib');
+  layer.querySelectorAll('.tdot').forEach((d) => d.remove());
+  const now = performance.now();
+  for (const pt of tuning.points) {
+    let { x, y } = pt.pos;
+    if (pt.collecting) { // EyeTrax "shakes" the dot while collecting
+      const shake = 5 + ((now - pt.collStart) / FINE_TUNE.collectMs) * 20;
+      x += (Math.random() * 2 - 1) * shake; y += (Math.random() * 2 - 1) * shake;
+    }
+    layer.insertAdjacentHTML('beforeend', `<div class="tdot" style="left:${x}px;top:${y}px;${pt.start && !pt.collecting ? 'box-shadow:0 0 0 6px #ffd23f' : ''}"></div>`);
+  }
+  if (px) layer.insertAdjacentHTML('beforeend', `<div class="tdot gaze" style="left:${px.x}px;top:${px.y}px"></div>`);
+}
+
+function finishTune(cancelled = false) {
+  const all = tuning?.all ?? [];
+  tuning = null;
+  $('calib').querySelectorAll('.tdot').forEach((d) => d.remove());
+  $('calib').style.display = 'none';
+  $('ctarget').style.display = '';
+  if (document.fullscreenElement) document.exitFullscreen?.();
+  const v = cancelled ? null : varianceOf(all);
+  if (!v) { $('gTune').textContent = cancelled ? 'fine-tune cancelled' : 'fine-tune needs more gaze samples'; return; }
+  kalman.setMeasurementNoise(v.x, v.y);
+  kalman.reset();
+  $('gTune').textContent = `tuned: measurement noise ${Math.round(Math.sqrt(v.x))} px × ${Math.round(Math.sqrt(v.y))} px (sd), from ${all.length} samples`;
+}
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && tuning) finishTune(true); });
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+$('start').onclick = start;
+$('stop').onclick = stop;
+$('relearn').onclick = () => { tracker.baseline.reset(); };
+$('calibrate').onclick = calibrate;
+const uncalibrate = (why) => { model.clear(); kalman.reset(); rough.reset(); $('gStatus').textContent = why; $('gErr').textContent = '—'; $('uncal').disabled = true; $('tune').disabled = true; $('gTune').textContent = '—'; };
+$('uncal').onclick = () => uncalibrate('not calibrated: rough estimate');
+$('gAspect').onchange = () => uncalibrate('aspect setting changed: calibrate again');
+$('gBoost').onchange = () => uncalibrate('bottom boost changed: calibrate again');
+$('tune').onclick = tune;
+</script>
+</body>
+</html>

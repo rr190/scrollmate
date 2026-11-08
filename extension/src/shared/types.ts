@@ -14,6 +14,8 @@ export interface Settings {
   demoLive: boolean; // demo uses the live LLM instead of canned reactions
   commentReactions: boolean; // deliberate hover on a visible top-level comment
   avatar: AvatarKind; // which character to draw
+  userCam: boolean; // opt-in webcam: on-device MediaPipe expressions so Mochi reacts to the viewer
+  eyeTrack: boolean; // opt-in (needs userCam + a calibration): where on the page the viewer looks, as coarse zones
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -25,6 +27,8 @@ export const DEFAULT_SETTINGS: Settings = {
   demoLive: false,
   commentReactions: true,
   avatar: 'mochi',
+  userCam: false,
+  eyeTrack: false,
 };
 
 export type UnderstandingLevel = 'visual_and_text' | 'visual_only' | 'text_only' | 'none';

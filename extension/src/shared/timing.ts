@@ -34,6 +34,10 @@ export interface PlaybackSnapshot {
   commentRequestId?: string | null; // active, visible selection; absent for normal video viewing
   commentReady?: boolean; // the buddy has arrived beside it
   readingComments?: boolean; // a hovered comment may be waiting for the previous bubble to finish
+  userAway?: boolean; // webcam: the viewer looked away / left (don't talk to an empty chair)
+  userLaughing?: boolean; // webcam: the viewer is laughing right now (don't talk over them)
+  userReadingComments?: boolean; // eye tracking: the viewer's eyes are on the comment panel
+  userEyesElsewhere?: boolean; // eye tracking: eyes on another part of the page (title, sidebar)
 }
 
 export interface EngineOptions {
@@ -164,8 +168,12 @@ export function decide(
     return v('STAY_SILENT', 'stale', 'user scrolled away: reaction is about a Short no longer on screen');
 
   // (Comment lines returned above; everything below is a video reaction.)
+  if (s.userAway) return v('WAIT', 'user_away', 'you looked away: holding the comment until you are back');
+  if (s.userLaughing) return v('WAIT', 'user_laughing', 'you are laughing: not talking over you');
   if (s.readingComments || s.commentRequestId)
     return v('WAIT', 'reading_comments', 'reading a comment: video reactions wait');
+  if (s.userReadingComments) return v('WAIT', 'user_reading_comments', 'your eyes are on the comments: video reactions wait');
+  if (s.userEyesElsewhere) return v('WAIT', 'user_eyes_busy', 'your eyes are elsewhere on the page: waiting until they are on the video or Mochi');
 
   if (s.videoId && (mem.deliveredPerVideo.get(s.videoId) ?? 0) >= MAX_PER_SHORT[opts.frequency])
     return c.isCallback

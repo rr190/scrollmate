@@ -17,7 +17,10 @@ import type {
   ReactResponse,
   SwipeResponse,
   TelemetryEvent,
+  TabMessage,
+  GazeConfig,
 } from '../shared/messages';
+import { GAZE_MODEL_KEY, type GazeModelData } from '../shared/faceSignals';
 import type { Analysis, MemoryRecord, ReactionProposal, Rect } from '../shared/types';
 
 const BACKEND = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? 'http://localhost:8000';
@@ -405,7 +408,111 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
   }
 }
 
-chrome.runtime.onMessage.addListener((msg: BgRequest, sender, sendResponse) => {
+// ---------- webcam (opt-in): hidden offscreen page runs MediaPipe; we relay its tiny signals ----------
+let camTabId: number | null = null;
+let camWanted = false;
+let gazeWanted = false; // eye tracking on (the content script re-sends this on every camera start)
+
+async function gazeConfig(): Promise<GazeConfig> {
+  const got = await chrome.storage.local.get(GAZE_MODEL_KEY).catch(() => ({}) as Record<string, unknown>);
+  return { enabled: gazeWanted, model: (got[GAZE_MODEL_KEY] as GazeModelData | undefined) ?? null };
+}
+
+async function pushGazeConfig() {
+  const config = await gazeConfig();
+  chrome.runtime.sendMessage({ target: 'offscreen', type: 'GAZE_CONFIG', config }).catch(() => undefined);
+}
+
+async function hasOffscreen(): Promise<boolean> {
+  try {
+    return await chrome.offscreen.hasDocument();
+  } catch {
+    return false;
+  }
+}
+
+async function ensureCameraPage() {
+  if (await hasOffscreen()) return;
+  await chrome.offscreen.createDocument({
+    url: 'camera-offscreen.html',
+    reasons: [chrome.offscreen.Reason.USER_MEDIA],
+    justification: 'Opt-in, on-device face expression signals so ScrollMate can react to the viewer.',
+  });
+}
+
+async function closeCameraPage() {
+  if (await hasOffscreen()) await chrome.offscreen.closeDocument().catch(() => undefined);
+}
+
+function toCamTab(msg: TabMessage) {
+  if (camTabId !== null) chrome.tabs.sendMessage(camTabId, msg).catch(() => undefined);
+}
+
+async function handleCamera(msg: BgRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
+  switch (msg.type) {
+    case 'CAMERA_START':
+      camTabId = sender.tab?.id ?? camTabId;
+      camWanted = true;
+      gazeWanted = !!msg.gaze;
+      if (await hasOffscreen()) await pushGazeConfig();
+      else await ensureCameraPage(); // it asks for the gaze config when it starts
+      return { ok: true };
+    case 'GAZE_ENABLE':
+      gazeWanted = msg.enabled;
+      await pushGazeConfig();
+      return { ok: true };
+    case 'GAZE_GET_CONFIG':
+      return gazeConfig();
+    case 'GAZE':
+      toCamTab(msg);
+      return { ok: true };
+    case 'GAZE_MODEL_SAVED':
+      await pushGazeConfig();
+      toCamTab({ type: 'GAZE_CALIBRATED' });
+      return { ok: true };
+    case 'OPEN_GAZE_CALIBRATION':
+      camTabId = sender.tab?.id ?? camTabId;
+      await chrome.tabs.create({ url: chrome.runtime.getURL('gaze-calibrate.html') });
+      return { ok: true };
+    case 'CAMERA_STOP':
+      camWanted = false;
+      chrome.runtime.sendMessage({ target: 'offscreen', type: 'CAMERA_STOP' }).catch(() => undefined);
+      await closeCameraPage();
+      toCamTab({ type: 'CAMERA_STATUS', state: 'off' });
+      return { ok: true };
+    case 'USER_SIGNAL':
+      toCamTab(msg);
+      return { ok: true };
+    case 'CAMERA_STATUS':
+      if (msg.state === 'needs_permission') {
+        await closeCameraPage();
+        await chrome.tabs.create({ url: chrome.runtime.getURL('camera-setup.html') });
+      }
+      toCamTab(msg);
+      return { ok: true };
+    case 'CAMERA_PERMISSION_GRANTED':
+      if (camWanted) {
+        await closeCameraPage();
+        await ensureCameraPage();
+      }
+      return { ok: true };
+  }
+  return undefined;
+}
+
+const CAMERA_TYPES = new Set([
+  'CAMERA_START', 'CAMERA_STOP', 'USER_SIGNAL', 'CAMERA_STATUS', 'CAMERA_PERMISSION_GRANTED',
+  'GAZE_ENABLE', 'GAZE_GET_CONFIG', 'GAZE', 'GAZE_MODEL_SAVED', 'OPEN_GAZE_CALIBRATION',
+]);
+
+chrome.runtime.onMessage.addListener((msg: BgRequest & { target?: string }, sender, sendResponse) => {
+  if (msg?.target === 'offscreen') return false; // addressed to the camera page, not us
+  if (CAMERA_TYPES.has(msg?.type)) {
+    handleCamera(msg, sender)
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
   handle(msg, sender)
     .then(sendResponse)
     .catch((e) => sendResponse({ ok: false, error: String(e) }));

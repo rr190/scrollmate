@@ -4,13 +4,17 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "vite build --mode content && vite build --mode background && vite build --mode stage",
+    "build": "vite build --mode content && vite build --mode background && vite build --mode stage && npm run build:face-lib",
     "typecheck": "tsc --noEmit",
     "test:comments": "tsx --test tests/comments.test.ts",
     "test:comments:browser": "node scripts/test-comments-browser.mjs",
-    "eval": "tsx ../eval/timing_eval.ts"
+    "eval": "tsx ../eval/timing_eval.ts",
+    "setup:mediapipe": "node scripts/setup-mediapipe.mjs",
+    "test:face": "tsx --test tests/faceSignals.test.ts tests/gaze.test.ts tests/gazeZones.test.ts",
+    "build:face-lib": "esbuild src/shared/faceSignals.ts --format=esm --outfile=../backend/app/static/faceSignals.js --log-level=warning"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "1.1.1",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },

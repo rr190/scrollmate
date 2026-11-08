@@ -1,4 +1,5 @@
 import type { Emotion } from './emotions';
+import type { GazeModelData, UserSignal } from './faceSignals';
 import type { Analysis, Frequency, MemoryRecord, Personality, ReactionProposal, Rect } from './types';
 
 /** Messages from content script / stage page to the background worker. */
@@ -37,6 +38,19 @@ export type BgRequest =
       frequency: Frequency;
     }
   | { type: 'OPEN_STAGE' }
+  // webcam (opt-in, on-device): content -> background, and offscreen camera page -> background
+  | { type: 'CAMERA_START'; gaze?: boolean }
+  // eye tracking (opt-in): content -> background (enable, open calibration); calibration page -> background (saved);
+  // offscreen -> background (ask for config, gaze points as screen fractions)
+  | { type: 'GAZE_ENABLE'; enabled: boolean }
+  | { type: 'OPEN_GAZE_CALIBRATION' }
+  | { type: 'GAZE_MODEL_SAVED' }
+  | { type: 'GAZE_GET_CONFIG' }
+  | { type: 'GAZE'; x: number; y: number; at: number }
+  | { type: 'CAMERA_STOP' }
+  | { type: 'CAMERA_PERMISSION_GRANTED' }
+  | { type: 'USER_SIGNAL'; signal: UserSignal }
+  | { type: 'CAMERA_STATUS'; state: CameraState; detail?: string }
   | { type: 'SWIPE'; videoId: string; title: string; channel: string; personality: Personality; frequency: Frequency }
   | {
       type: 'OBSERVE';
@@ -65,7 +79,7 @@ export type BgRequest =
   | { type: 'TELEMETRY'; event: TelemetryEvent };
 
 /** Small scalar-only events for the backend's live feed (/ui). Never frames or transcripts. */
-export type TelemetryEvent = { type: 'short_started' | 'short_left' | 'frame' | 'decision' | 'delivered' | 'emotion' | 'status' } & Record<
+export type TelemetryEvent = { type: 'short_started' | 'short_left' | 'frame' | 'decision' | 'delivered' | 'emotion' | 'status' | 'user' } & Record<
   string,
   string | number | boolean | null
 >;
@@ -118,7 +132,16 @@ export interface ReactResponse {
 }
 
 /** Messages from the background worker to the content script. */
-export type TabMessage = { type: 'ACTIVE_TAB_GRANTED' };
+export type CameraState = 'off' | 'starting' | 'on' | 'needs_permission' | 'error';
+export type TabMessage =
+  | { type: 'ACTIVE_TAB_GRANTED' }
+  | { type: 'USER_SIGNAL'; signal: UserSignal }
+  | { type: 'CAMERA_STATUS'; state: CameraState; detail?: string }
+  | { type: 'GAZE'; x: number; y: number; at: number }
+  | { type: 'GAZE_CALIBRATED' };
+
+/** Background -> offscreen camera page. */
+export interface GazeConfig { enabled: boolean; model: GazeModelData | null }
 
 export function sendBg<T = unknown>(msg: BgRequest): Promise<T> {
   return new Promise((resolve, reject) => {

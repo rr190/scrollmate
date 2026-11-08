@@ -156,10 +156,13 @@ export function App({ ctl }: { ctl: Controller }) {
           }}
         >
           <span className="sm-float">
-            <Avatar kind={s.settings.avatar} mood={s.mood} />
+            <Avatar kind={s.settings.avatar} mood={s.mood} look={st.eyeTrack ? s.gaze.look : null} />
           </span>
           <span className={`sm-dot ${st.enabled ? 'sm-on' : 'sm-off'}`} title={st.enabled ? 'Active' : 'Off'} />
           {st.demo && st.enabled && <span className="sm-demo-badge">DEMO</span>}
+          {st.enabled && st.userCam && s.camera === 'on' && (
+            <span className="sm-cam-badge" title="Camera on: processed on this computer only">📷</span>
+          )}
         </button>
         {/* No label once it's reacting: a face-only reaction speaks for itself (no lone "Hmm…"). */}
         {visit && !s.bubble && visit.phase !== 'reacting' && (

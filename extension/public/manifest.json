@@ -3,17 +3,33 @@
   "name": "ScrollMate",
   "version": "0.1.0",
   "description": "A tiny AI friend that watches YouTube Shorts with you, remembers the funny bits, and knows when to stay quiet.",
-  "permissions": ["storage", "activeTab"],
-  "host_permissions": ["https://www.youtube.com/*", "http://localhost:8000/*"],
-  "background": { "service_worker": "background.js" },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "http://localhost:8000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "action": {
     "default_title": "ScrollMate: click to let it see this tab's Shorts (grants screen frames)"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   }
 }

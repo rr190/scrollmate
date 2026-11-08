@@ -106,6 +106,15 @@
   .short .sub { color: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; }
   .short .strip { max-height: 120px; max-width: 360px; border-radius: 6px; border: 1px solid var(--line); }
   .tl { grid-column: 1 / -1; display: grid; gap: 4px; font-size: 13px; }
+  .attn { grid-column: 1 / -1; display: none; gap: 4px; font-size: 11.5px; color: var(--muted); }
+  .attn.on { display: grid; }
+  .attn .bar { position: relative; height: 16px; border-radius: 5px; overflow: visible; background: var(--code); display: flex; }
+  .attn .seg { height: 100%; }
+  .attn .seg:first-child { border-radius: 5px 0 0 5px; }
+  .attn .mark { position: absolute; top: -5px; width: 3px; height: 26px; margin-left: -1px; background: var(--ink); border-radius: 2px; }
+  .attn .mark.bad { background: #e5484d; }
+  .attn .legend { display: flex; flex-wrap: wrap; gap: 10px; }
+  .attn .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
   .tl .ev { display: grid; grid-template-columns: 62px 96px minmax(0, 1fr); gap: 8px; align-items: baseline; }
   .tl .t { color: var(--muted); font-size: 11.5px; font-family: ui-monospace, monospace; }
   .tag { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 6px; background: var(--code); color: var(--muted); text-align: center; }
@@ -123,6 +132,7 @@
   <h1>ScrollMate backend playground</h1>
   <div class="status" id="status"><span class="dot" id="dot"></span> checking /health…</div>
   <button class="small" id="refreshHealth">Refresh</button>
+  <a href="/ui/face" style="margin-left:auto;color:var(--accent);font-weight:600;text-decoration:none">📷 Webcam test</a>
 </header>
 
 <main>
@@ -548,9 +558,9 @@ function shortCard(videoId) {
   $('feedEmpty')?.remove();
   const el = document.createElement('div');
   el.className = 'short';
-  el.innerHTML = `<div><div class="title">${esc(videoId)}</div><div class="sub">${esc(videoId)}</div></div><div class="img"></div><div class="tl"></div>`;
+  el.innerHTML = `<div><div class="title">${esc(videoId)}</div><div class="sub">${esc(videoId)}</div></div><div class="img"></div><div class="attn"></div><div class="tl"></div>`;
   $('feed').prepend(el);
-  const s = { el, tl: el.querySelector('.tl'), lastDecision: new Map() };
+  const s = { el, tl: el.querySelector('.tl'), lastDecision: new Map(), attn: { start: null, end: null, segs: [], marks: [] } };
   shorts.set(videoId, s);
   while (shorts.size > 30) { const [k, v] = shorts.entries().next().value; v.el.remove(); shorts.delete(k); }
   return s;
@@ -567,11 +577,55 @@ function line(card, ts, tag, cls, html) {
   card.tl.append(d);
 }
 
+// ---------- attention timeline: where your eyes were during the Short, and when ScrollMate spoke ----------
+const ZONE_COLOR = { video: '#3b82f6', comments: '#f59e0b', mochi: '#ec4899', elsewhere: '#94a3b8', off_screen: '#475569' };
+const ZONE_NAME = { video: 'video', comments: 'comments', mochi: 'Mochi', elsewhere: 'elsewhere on page', off_screen: 'off screen' };
+function renderAttn(card) {
+  const a = card.attn;
+  const box = card.el.querySelector('.attn');
+  if (!a.segs.length || a.start == null) return;
+  const end = a.end ?? Date.now() / 1000;
+  const span = Math.max(1, end - a.start);
+  const pct = (t) => Math.max(0, Math.min(100, ((t - a.start) / span) * 100));
+  const segs = a.segs.map((g, i) => {
+    const from = Math.max(a.start, g.ts), to = Math.min(end, a.segs[i + 1]?.ts ?? end);
+    return to > from ? `<div class="seg" title="${ZONE_NAME[g.zone] || g.zone}: ${(to - from).toFixed(1)} s" style="width:${((to - from) / span) * 100}%;background:${ZONE_COLOR[g.zone] || '#999'}"></div>` : '';
+  });
+  const lead = a.segs[0].ts > a.start ? `<div class="seg" style="width:${pct(a.segs[0].ts)}%"></div>` : '';
+  const marks = a.marks.map((m) => {
+    const bad = m.zone && m.zone !== 'video' && m.zone !== 'mochi';
+    return `<div class="mark ${bad ? 'bad' : ''}" style="left:${pct(m.ts)}%" title="ScrollMate spoke (your eyes: ${ZONE_NAME[m.zone] || 'unknown'}): ${esc(m.text)}"></div>`;
+  });
+  const total = {};
+  a.segs.forEach((g, i) => { const from = Math.max(a.start, g.ts), to = Math.min(end, a.segs[i + 1]?.ts ?? end); if (to > from) total[g.zone] = (total[g.zone] || 0) + (to - from); });
+  const onVideo = Math.round(((total.video || 0) / span) * 100);
+  const spokeFree = a.marks.filter((m) => m.zone === 'video' || m.zone === 'mochi').length;
+  box.classList.add('on');
+  box.innerHTML = `<div><b>Attention</b> · eyes on the video ${onVideo}% · spoke ${a.marks.length}× (${spokeFree} while your eyes were free)</div>
+    <div class="bar">${lead}${segs.join('')}${marks.join('')}</div>
+    <div class="legend">${Object.keys(ZONE_COLOR).filter((z) => total[z]).map((z) => `<span><i style="background:${ZONE_COLOR[z]}"></i>${ZONE_NAME[z]} ${total[z].toFixed(0)} s</span>`).join('')}<span>▍ ScrollMate spoke</span></div>`;
+}
+setInterval(() => { if (liveId && shorts.has(liveId)) renderAttn(shorts.get(liveId)); }, 1000);
+
+function trackAttention(card, ev) {
+  const a = card.attn;
+  const ts = ev.sentAt ? ev.sentAt / 1000 : ev.ts; // the extension's own clock (events arrive in batches)
+  if (ev.type === 'short_started') { a.start = ts; a.end = null; }
+  else if (ev.type === 'short_left') a.end = ts;
+  else if (ev.type === 'user' && ev.gazeZone && !ev.eyeContact) {
+    a.start ??= ts;
+    a.segs.push({ zone: ev.gazeZone, ts: ts });
+  } else if (ev.type === 'delivered') a.marks.push({ ts: ts, zone: ev.gazeZone || null, text: ev.text || '' });
+  else return;
+  renderAttn(card);
+}
+
 function onFeedEvent(ev) {
   const vid = ev.videoId || ev.target || 'unknown';
   // Decisions belong to the Short the reaction is about.
   const card = shortCard(ev.type === 'decision' ? ev.target || vid : vid);
   const demo = ev.demo ? ' <span class="chip">demo</span>' : '';
+  trackAttention(card, ev);
   switch (ev.type) {
     case 'short_started':
       card.el.querySelector('.title').innerHTML = esc(ev.title || '(no title yet)') + demo;
@@ -658,6 +712,16 @@ function onFeedEvent(ev) {
     case 'status':
       line(card, ev.ts, 'note', '', esc(ev.note || ''));
       break;
+    case 'user': {
+      if (ev.gazeZone) {
+        const where = { video: '🎬 the video', comments: '💬 the comments (video reactions held)', mochi: '🍡 Mochi', elsewhere: 'the page', off_screen: 'off screen (reactions held)' }[ev.gazeZone] || esc(ev.gazeZone);
+        line(card, ev.ts, 'EYES', 'emotion', ev.eyeContact ? 'eye contact with Mochi → it smiles back 😊' : `looking at ${where}`);
+        break;
+      }
+      const face = { laughing: '😂', happy: '😊', surprised: '😮', sad: '😢', neutral: '😐' }[ev.expression] || '';
+      line(card, ev.ts, 'YOU', 'emotion', !ev.present ? 'not in view' : ev.lookingAway ? 'looking away (comments held)' : `${face} ${esc(ev.expression)}`);
+      break;
+    }
     case 'emotion':
       line(card, ev.ts, 'FACE', 'emotion', `<span style="font-size:18px">${EMO[ev.emotion] || ''}</span> <b>${esc(ev.emotion)}</b> <span class="k">at ${ev.at}s (moment at ${ev.t}s)${ev.via ? ' · from ' + esc(ev.via) : ''}${ev.sinceSwipeMs != null ? ' · ' + ev.sinceSwipeMs + ' ms after swipe' : ''}</span>`);
       break;

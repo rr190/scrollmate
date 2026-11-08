@@ -4,3 +4,5 @@ dist/
 __pycache__/
 .env
 .vscode/chrome-profile/
+# MediaPipe wasm + face model (~30 MB): run `npm run setup:mediapipe` in extension/
+extension/public/mediapipe/
