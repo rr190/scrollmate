@@ -34,19 +34,16 @@ export interface PlaybackSnapshot {
   commentRequestId?: string | null; // active, visible selection; absent for normal video viewing
   commentReady?: boolean; // the buddy has arrived beside it
   readingComments?: boolean; // a hovered comment may be waiting for the previous bubble to finish
-  commentsOpen?: boolean; // the comment panel is open: the child is looking at comments, not the reel
   userAway?: boolean; // webcam: the viewer looked away / left (don't talk to an empty chair)
   userLaughing?: boolean; // webcam: the viewer is laughing right now (don't talk over them)
-  conversationBusy?: boolean; // Talk owns spoken audio; other reactions can still appear as bubbles.
-  /** A bubble is still on screen or a line is still being spoken: a new video reaction must not replace it. */
-  bubbleVisible?: boolean;
+  userReadingComments?: boolean; // eye tracking: the viewer's eyes are on the comment panel
+  userChoosing?: boolean; // Eye Control: a button is glowing (the child is choosing): don't talk over it
+  userEyesElsewhere?: boolean; // eye tracking: eyes on another part of the page (title, sidebar)
 }
 
 export interface EngineOptions {
   frequency: Frequency;
   voiceEnabled: boolean;
-  /** Set in the backend /ui: how interesting a moment must be before speaking (overrides the frequency's bar). */
-  minImportance?: number | null;
 }
 
 export const COOLDOWN_MS: Record<Frequency, number> = { rare: 45_000, balanced: 20_000, chatty: 12_000 };
@@ -58,6 +55,8 @@ export const SAME_SHORT_GAP_MS: Record<Frequency, number> = { rare: 8_000, balan
 export const FAST_SCROLL = { count: 3, windowMs: 6_000 };
 export const LOOP_GAP_MS = 2_500;
 export const END_GAP_S = 1.2;
+/** Gaze estimates can drift. Briefly defer, then allow text without speaking over the viewer. */
+export const GAZE_HOLD_MS = 2_000;
 const KEY_MOMENT_S = 1.5;
 const MAX_QUEUE = 6;
 const MAX_LOG = 1_000;
@@ -163,21 +162,28 @@ export function decide(
     return v('SPEAK_NOW', 'selected_comment', 'reacting beside the visible selected comment', 'bubble');
   }
 
-  const minImp = opts.minImportance ?? MIN_IMPORTANCE[opts.frequency];
+  const minImp = MIN_IMPORTANCE[opts.frequency];
   if (c.importance < minImp)
-    return v('STAY_SILENT', 'low_importance', `importance ${c.importance.toFixed(2)} < ${minImp} ${opts.minImportance != null ? '(set in /ui)' : `for "${opts.frequency}"`}`);
+    return v('STAY_SILENT', 'low_importance', `importance ${c.importance.toFixed(2)} < ${minImp} for "${opts.frequency}"`);
 
   const onScreen = s.videoId === c.targetVideoId;
   if (!onScreen && !c.isCallback)
     return v('STAY_SILENT', 'stale', 'user scrolled away: reaction is about a Short no longer on screen');
 
   // (Comment lines returned above; everything below is a video reaction.)
-  if (s.bubbleVisible) return v('WAIT', 'bubble_visible', 'previous line still on screen: waiting for it to finish');
   if (s.userAway) return v('WAIT', 'user_away', 'you looked away: holding the comment until you are back');
   if (s.userLaughing) return v('WAIT', 'user_laughing', 'you are laughing: not talking over you');
   if (s.readingComments || s.commentRequestId)
     return v('WAIT', 'reading_comments', 'reading a comment: video reactions wait');
-  if (s.commentsOpen) return v('WAIT', 'comments_open', 'the comments are open: reacting to comments instead of the reel');
+  const gazeBusy = s.userReadingComments || s.userEyesElsewhere;
+  if (gazeBusy && now - c.createdAt < GAZE_HOLD_MS) {
+    if (s.userReadingComments) return v('WAIT', 'user_reading_comments', 'your eyes are on the comments: briefly holding the video reaction');
+    return v('WAIT', 'user_eyes_busy', 'gaze is away from the video: briefly holding the reaction');
+  }
+  if (s.userChoosing) return v('WAIT', 'user_choosing', 'you are choosing with your eyes: waiting');
+  if (s.userReadingComments) return v('WAIT', 'user_reading_comments', 'your eyes are on the comments: video reactions wait');
+  if (s.userEyesElsewhere) return v('WAIT', 'user_eyes_busy', 'your eyes are elsewhere on the page: waiting until they are on the video or Mochi');
+
   if (s.videoId && (mem.deliveredPerVideo.get(s.videoId) ?? 0) >= MAX_PER_SHORT[opts.frequency])
     return c.isCallback
       ? v('SAVE_FOR_LATER', 'per_short_cap', 'already reacted on this Short: saving the callback')
@@ -202,8 +208,8 @@ export function decide(
   const gap = naturalGap(s, now);
   if (gap) {
     const quiet = isQuiet(s);
-    if (opts.voiceEnabled && quiet && !s.conversationBusy) return v('SPEAK_NOW', `gap_${gap}`, `natural gap (${gap}), quiet: speaking`, 'voice');
-    const why = s.conversationBusy ? ', Talk owns voice: silent bubble' : opts.voiceEnabled ? ', audio may be playing: silent bubble' : '';
+    if (opts.voiceEnabled && quiet && !gazeBusy) return v('SPEAK_NOW', `gap_${gap}`, `natural gap (${gap}), quiet: speaking`, 'voice');
+    const why = gazeBusy ? ', gaze uncertain: silent bubble' : opts.voiceEnabled ? ', audio may be playing: silent bubble' : '';
     return v('SPEAK_NOW', `gap_${gap}`, `natural gap (${gap})${why}`, 'bubble');
   }
 
@@ -223,8 +229,6 @@ export function decide(
 export class TimingEngine {
   queue: Candidate[] = [];
   log: DecisionLogEntry[] = [];
-  /** Entries ever logged (never reset): lets readers resume after the log is trimmed or cleared. */
-  logTotal = 0;
   private mem: EngineMemory = { lastSpokeAt: null, lastSpokeVideo: null, deliveredTexts: new Set(), deliveredPerVideo: new Map() };
   private lastCode = new Map<string, string>();
 
@@ -248,8 +252,6 @@ export class TimingEngine {
     const ordered = [...this.queue].sort((a, b) => b.importance - a.importance || a.createdAt - b.createdAt);
 
     for (const c of ordered) {
-      // One delivery per tick: anything after it is re-evaluated next tick, never marked delivered unseen.
-      if (delivered) { keep.push(c); continue; }
       const verdict = decide(c, s, this.mem, this.opts, now);
       this.record(c, s, verdict, now);
       if (verdict.decision === 'SPEAK_NOW') {
@@ -269,8 +271,6 @@ export class TimingEngine {
       this.record(dropped, s, v('STAY_SILENT', 'queue_full', 'queue full: dropped least important'), now);
     }
     this.queue = keep;
-    const queued = new Set(keep.map((c) => c.id));
-    for (const id of this.lastCode.keys()) if (!queued.has(id)) this.lastCode.delete(id); // bounded to the queue
     return delivered;
   }
 
@@ -304,7 +304,6 @@ export class TimingEngine {
     if (!force && this.lastCode.get(c.id) === key) return; // log changes, not every tick
     this.lastCode.set(c.id, key);
     const cooldown = SAME_SHORT_GAP_MS[this.opts.frequency];
-    this.logTotal++;
     this.log.push({
       t: now,
       reactionId: c.id,

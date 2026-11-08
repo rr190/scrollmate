@@ -49,7 +49,7 @@ One click on the toolbar icon turns it completely on or off.
 cd backend
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # macOS/Linux: .venv/bin/pip
 cp .env.example .env            # add your API keys here (never in the extension)
-.venv/Scripts/python -m uvicorn app.main:app --port 8000
+.venv/Scripts/python -m uvicorn app.main:app --port 8000   # macOS/Linux: .venv/bin/python
 ```
 
 With no keys, it runs in **mock mode** so you can still try the pipeline.
@@ -84,6 +84,6 @@ backend/     FastAPI + LiteLLM: AI calls, memory, safety, /ui
 eval/        timing evaluation (npm run eval in extension/)
 ```
 
-**Privacy:** the buddy is off until switched on. Webcam frames never leave the device. Comment text is never stored. Nothing is kept after the session.
+**Privacy:** the buddy is off until switched on. Webcam frames never leave the device. Comment text is never stored. The memory of Shorts and feelings lasts only for the session (only settings like avatar and on/off are saved).
 
 **More detail:** [IMPLEMENTATION.md](IMPLEMENTATION.md) has the full technical notes: models, endpoints, tests, limitations.

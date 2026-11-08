@@ -14,14 +14,12 @@ import {
   type CaptureResponse,
   type ObserveResponse,
   type ReactResponse,
-  type FeelingLineResponse,
   type SwipeResponse,
   type TelemetryEvent,
-  type TalkContext,
 } from '../shared/messages';
 import { predictMoment } from '../shared/moments';
-import { FeelingNoticer, MIRROR_POP } from '../shared/feelings';
-import type { UserSignal } from '../shared/faceSignals';
+import { controlTarget, DwellSelector, type ControlTarget } from '../shared/eyeControl';
+import { GAZE_MODEL_KEY, gazeZone, screenToViewport, ZoneDwell, type GazeModelData, type GazeZone, type UserSignal } from '../shared/faceSignals';
 import { CueTrack, type Emotion, type EmotionCue } from '../shared/emotions';
 import { TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
 import { DEFAULT_SETTINGS, type MemoryRecord, type ReactionProposal, type Rect, type Settings } from '../shared/types';
@@ -29,7 +27,7 @@ import { applySettings } from '../shared/settings';
 import { DEMO_SHORTS, DemoDriver, type DemoShort, type DemoView } from './demo';
 import { readPageText, ShortsWatcher, type LeftInfo, type ShortInfo } from './shorts';
 import { Speaker } from './speech';
-import { CommentsWatcher, COMMENT_TRAVEL_MS, commentPosition, type CommentTarget, type CommentSelection } from './comments';
+import { CommentsWatcher, PANEL, COMMENT_TRAVEL_MS, commentPosition, type CommentTarget, type CommentSelection } from './comments';
 
 const LOG = '[ScrollMate]';
 export type Mood = 'idle' | 'watching' | 'thinking' | 'amused' | 'speaking' | 'sleeping' | Emotion;
@@ -41,8 +39,6 @@ export interface Position {
 }
 
 export interface UiState {
-  talk: { active: boolean; phase: 'ready' | 'starting' | 'listening' | 'thinking' | 'speaking' | 'error';
-    transcript: string; reply: string; error: string | null; emotion: Mood };
   mood: Mood;
   bubble: { id: string; text: string; commentRequestId?: string } | null;
   settings: Settings;
@@ -55,8 +51,10 @@ export interface UiState {
   commentVisit: (CommentTarget & { requestId: string; phase: 'running' | 'reading' | 'reacting'; emotion: Emotion | null }) | null;
   camera: CameraState; // webcam status (opt-in)
   user: UserSignal | null; // latest on-device face signal
-  /** A short "I see you!" pop under the buddy when it mirrors the child's face (e.g. "😂 you're laughing!"). */
-  mirrorPop: { id: number; text: string } | null;
+  /** Eye tracking (opt-in): where the viewer is looking, as a coarse zone. */
+  gaze: { calibrated: boolean; error: number | null; zone: GazeZone | null; look: { x: number; y: number } | null };
+  /** Eye Control: which big button is glowing, how full its ring is, and the last one chosen (for a ✓ flash). */
+  eyeControl: { target: ControlTarget | null; progress: number; rough: boolean; chosen: { target: ControlTarget; at: number } | null };
 }
 
 interface ShortCtx {
@@ -103,7 +101,6 @@ const newId = () => `r${Date.now().toString(36)}${(idSeq++).toString(36)}`;
 
 export class Controller {
   state: UiState = {
-    talk: { active: false, phase: 'ready', transcript: '', reply: '', error: null, emotion: 'curious' },
     mood: 'sleeping',
     bubble: null,
     settings: { ...DEFAULT_SETTINGS },
@@ -116,7 +113,8 @@ export class Controller {
     commentVisit: null,
     camera: 'off',
     user: null,
-    mirrorPop: null,
+    gaze: { calibrated: false, error: null, zone: null, look: null },
+    eyeControl: { target: null, progress: 0, rough: false, chosen: null },
   };
   engine = new TimingEngine({ frequency: 'balanced', voiceEnabled: false });
   private listeners = new Set<() => void>();
@@ -140,11 +138,11 @@ export class Controller {
   /** Last few comments reacted to on this Short + what ScrollMate said, sent as context. RAM only, per Short. */
   private commentHistory: PreviousComment[] = [];
   private commentsPaused = false; // settings/dragging take precedence over automatic movement
-  private talkTurnId: string | null = null;
-  private talkTimer: number | undefined;
-  private discussedComment: { videoId: string; text: string } | null = null;
-  private talkContextKey = '';
-  private nextTalkContextAt = 0;
+  private gazeDwell = new ZoneDwell(300); // a zone must hold 0.3 s (gaze jitters)
+  /** Latest gaze point in viewport px (not in state: read on demand, e.g. by roaming). */
+  gazePoint: { x: number; y: number } | null = null;
+  private lastGazeAt = 0;
+  private lastEyeContact = 0;
 
   constructor(public env: Env, private host: HTMLElement) {}
 
@@ -167,8 +165,8 @@ export class Controller {
       const settings = applySettings(saved, { enabled: this.env === 'stage' || saved.enabled });
       if (this.env === 'stage') Object.assign(settings, { demo: true, enabled: true });
       this.set({ settings, position: (r[posKey(this.env)] as Position) ?? null });
-      if (JSON.stringify(r[SETTINGS_KEY]) !== JSON.stringify(settings))
-        chrome.storage.local.set({ [SETTINGS_KEY]: settings }).catch(() => undefined);
+      await this.loadGazeModelInfo();
+      this.dwell.dwellMs = settings.eyeControlDwellMs;
     } catch {
       /* storage unavailable: defaults */
     }
@@ -183,12 +181,6 @@ export class Controller {
       this.comments = new CommentsWatcher({
         enabled: () => this.commentsEnabled(),
         onSelect: (target) => this.visitComment(target),
-        onFocus: (target) => {
-          const videoId = this.watcher?.currentId;
-          if (!videoId) return;
-          this.discussedComment = { videoId, text: target.text };
-          this.syncTalkContext();
-        },
         onCancel: () => this.cancelCommentVisit(),
         onHint: (message) => this.setCommentHint(message),
       });
@@ -200,10 +192,11 @@ export class Controller {
       });
     }
     chrome.runtime.onMessage.addListener((m: TabMessage) => {
-      if (this.destroyed) return false;
       if (m?.type === 'USER_SIGNAL') this.onUserSignal(m.signal);
+      else if (m?.type === 'GAZE') this.onGaze(m.x, m.y, !!m.rough);
+      else if (m?.type === 'LONG_BLINK') this.onLongBlink();
+      else if (m?.type === 'GAZE_CALIBRATED') void this.loadGazeModelInfo().then(() => this.set({ note: 'Eye tracking calibrated ✓' }));
       else if (m?.type === 'CAMERA_STATUS') this.onCameraStatus(m.state, m.detail);
-      else if (m?.type === 'TALK_EVENT') this.onTalkEvent(m);
       return false;
     });
     if (this.state.settings.enabled && this.state.settings.userCam) this.startCamera();
@@ -212,14 +205,7 @@ export class Controller {
     this.tick();
   }
 
-  private destroyed = false;
-
   destroy() {
-    this.destroyed = true;
-    this.endTalk();
-    this.epoch++; // late async results are ignored
-    sendBg({ type: 'CANCEL_ALL' }).catch(() => undefined);
-    this.stopDemo();
     window.clearInterval(this.tickTimer);
     this.watcher?.stop();
     this.comments?.stop();
@@ -229,81 +215,6 @@ export class Controller {
   }
 
   // ---------- settings ----------
-  openTalk() {
-    if (this.destroyed || !this.state.settings.enabled || this.env !== 'youtube' || this.state.settings.demo || this.state.talk.active) return;
-    const requestId = this.talkTurnId = newId();
-    this.set({ talk: { ...this.state.talk, active: true, phase: 'starting', transcript: '', reply: '', error: null, emotion: 'curious' } });
-    this.speaker.cancel();
-    this.armTalkTimeout(30_000);
-    const context = this.talkContext(requestId);
-    this.talkContextKey = JSON.stringify(context);
-    this.nextTalkContextAt = Date.now() + 600;
-    void sendBg<{ ok: boolean; error?: string }>({ type: 'TALK_START', context }).then((result) => {
-      if (this.talkTurnId !== requestId) { void sendBg({ type: 'TALK_CANCEL', requestId }).catch(() => undefined); return; }
-      if (!result?.ok) this.stopTalk(result?.error ?? 'Microphone unavailable. Tap to retry.');
-    }).catch(() => { if (this.talkTurnId === requestId) this.stopTalk('Connection lost. Reload the extension and this tab.'); });
-    this.tick();
-  }
-
-  toggleTalk() { if (this.state.talk.active) this.endTalk(); else this.openTalk(); }
-  endTalk() { this.stopTalk(); }
-
-  private stopTalk(error?: string) {
-    const requestId = this.talkTurnId;
-    this.talkTurnId = null;
-    this.talkContextKey = '';
-    window.clearTimeout(this.talkTimer);
-    if (requestId) void sendBg({ type: 'TALK_CANCEL', requestId }).catch(() => undefined);
-    this.set({ talk: { active: false, phase: error ? 'error' : 'ready', transcript: '', reply: '', error: error ?? null, emotion: 'curious' } });
-    if (error) {
-      window.clearTimeout(this.bubbleTimer);
-      this.set({ bubble: { id: newId(), text: error } });
-      this.bubbleTimer = window.setTimeout(() => this.hideBubble(), 8000);
-    }
-    this.tick();
-  }
-
-  private talkContext(requestId: string): TalkContext {
-    const videoId = this.watcher?.currentId ?? '';
-    const discussion = this.comments?.discussionContext() ?? { commentsOpen: false, visibleComments: [] };
-    return { requestId, videoId, title: this.ctx?.title || readPageText().title,
-      selectedComment: this.discussedComment?.videoId === videoId ? this.discussedComment.text : this.state.commentVisit?.text ?? '',
-      ...discussion, personality: this.state.settings.personality };
-  }
-
-  private syncTalkContext() {
-    this.nextTalkContextAt = Date.now() + 600;
-    if (!this.talkTurnId) return;
-    const context = this.talkContext(this.talkTurnId);
-    const key = JSON.stringify(context);
-    if (key === this.talkContextKey) return;
-    this.talkContextKey = key;
-    void sendBg({ type: 'TALK_CONTEXT', context }).catch(() => {
-      if (this.talkContextKey === key) this.talkContextKey = '';
-    });
-  }
-
-  private talkBusy() { return this.state.talk.active; }
-
-  private armTalkTimeout(ms: number) {
-    window.clearTimeout(this.talkTimer);
-    this.talkTimer = window.setTimeout(() => this.stopTalk('Voice connection stopped. Tap the microphone to reconnect.'), ms);
-  }
-
-  private onTalkEvent(message: Extract<TabMessage, { type: 'TALK_EVENT' }>) {
-    if (!this.state.talk.active || message.requestId !== this.talkTurnId || !this.state.settings.enabled) return;
-    const event = message.event;
-    if (event.type === 'status') {
-      if (event.state === 'error' || event.state === 'needs_permission') { this.stopTalk(event.error ?? 'Live voice unavailable. Tap the microphone to retry.'); return; }
-      this.set({ talk: { ...this.state.talk, phase: event.state } });
-    } else if (event.type === 'caption') {
-      this.set({ talk: { ...this.state.talk, [event.role === 'user' ? 'transcript' : 'reply']: event.text } });
-    } else if (event.type === 'interrupted') {
-      this.set({ talk: { ...this.state.talk, phase: 'listening', reply: '', transcript: '' } });
-    }
-    this.armTalkTimeout(45_000); this.tick();
-  }
-
   async updateSettings(patch: Partial<Settings>) {
     const prev = this.state.settings;
     const next = applySettings(prev, patch);
@@ -318,6 +229,19 @@ export class Controller {
     const camIs = next.enabled && next.userCam;
     if (!camWas && camIs) this.startCamera();
     if (camWas && !camIs && this.state.camera !== 'off') this.stopCamera();
+    if (camWas && camIs && prev.eyeTrack !== next.eyeTrack) {
+      sendBg({ type: 'GAZE_ENABLE', enabled: next.eyeTrack }).catch(() => undefined);
+      if (!next.eyeTrack) this.clearGaze();
+    }
+    // A master wake can need camera permission first. Offer calibration in the menu instead of opening two tabs.
+    if (patch.eyeTrack === true && patch.enabled === undefined && next.enabled && !this.state.gaze.calibrated) this.openGazeCalibration();
+    if (camWas && !camIs) this.stopCamera();
+    const gazeWas = prev.eyeTrack || prev.eyeControl, gazeIs = next.eyeTrack || next.eyeControl;
+    if (camWas && camIs && gazeWas !== gazeIs) sendBg({ type: 'GAZE_ENABLE', enabled: gazeIs }).catch(() => undefined);
+    if (prev.eyeTrack && !next.eyeTrack) this.clearGaze();
+    if (prev.eyeControl && !next.eyeControl) this.set({ eyeControl: { target: null, progress: 0, rough: false, chosen: null } });
+    this.dwell.dwellMs = next.eyeControlDwellMs;
+    if (!prev.eyeTrack && next.eyeTrack && !this.state.gaze.calibrated) this.openGazeCalibration();
     if (!prev.voice && next.voice === false) this.speaker.cancel();
     if (prev.voice && !next.voice) this.speaker.cancel();
     const demoWasOn = prev.demo && prev.enabled;
@@ -327,7 +251,7 @@ export class Controller {
     if (!prev.enabled && next.enabled && !next.demo) {
       this.set({ note: 'ScrollMate is watching. Reactions appear only at natural pauses.' });
       // Start fresh on the Short already on screen.
-      if (this.watcher?.currentId) this.onShortChange({ videoId: this.watcher.currentId, startedAt: Date.now() }, null);
+      if (this.watcher?.currentId) this.ctx = this.newCtx(this.watcher.currentId);
     }
     this.tick();
   }
@@ -340,45 +264,6 @@ export class Controller {
   pauseCommentVisits(paused: boolean) {
     this.commentsPaused = paused;
     if (paused) { this.cancelCommentVisit(); this.comments?.reset(); }
-  }
-
-  // ---------- comments open: the buddy reads them by itself if the child doesn't point at one ----------
-  private commentsOpen = false; // the child opened the comment panel (seen going from closed to open)
-  private commentsSeenClosed = false;
-  private commentsOpenSince = 0;
-  private lastCommentBusyAt = 0;
-  private lastOpenCheckAt = 0;
-  private autoReads = new Map<string, number>(); // per Short
-  private static readonly AUTO_READ_AFTER_MS = 2_500;
-  private static readonly AUTO_READS_PER_SHORT = 3;
-
-  private tickCommentsOpen(videoId: string | null, now: number) {
-    if (this.env !== 'youtube' || !this.comments) return;
-    if (now - this.lastOpenCheckAt >= 500) { // the DOM check is cheap but not free
-      this.lastOpenCheckAt = now;
-      const visible = this.comments.discussionContext().commentsOpen; // the page's panel, not our on/off state
-      if (!visible) {
-        this.commentsSeenClosed = true;
-        this.commentsOpen = false;
-      } else if (!this.commentsOpen && this.commentsSeenClosed) {
-        // a deliberate open (closed -> open), not a page that happened to load with comments showing
-        this.commentsOpen = true;
-        this.commentsOpenSince = now;
-      }
-    }
-    if (this.state.commentVisit || this.commentAttempt || this.state.commentHint) this.lastCommentBusyAt = now;
-    if (!this.commentsOpen || !this.commentsEnabled() || !videoId || this.state.bubble || this.speaking) return;
-    const done = this.autoReads.get(videoId) ?? 0;
-    if (done >= Controller.AUTO_READS_PER_SHORT) return;
-    const idleSince = Math.max(this.commentsOpenSince, this.lastCommentBusyAt);
-    if (now - idleSince < Controller.AUTO_READ_AFTER_MS) return;
-    if (this.comments.autoSelect((text) => this.seenComments.has(text))) {
-      this.autoReads.set(videoId, done + 1);
-      this.lastCommentBusyAt = now;
-      console.log(LOG, 'comments open: reading one by myself');
-    } else {
-      this.lastCommentBusyAt = now; // nothing new to read right now: try again in a bit
-    }
   }
 
   private commentsEnabled() {
@@ -404,11 +289,11 @@ export class Controller {
   private visitComment(target: CommentTarget): CommentSelection {
     const videoId = this.watcher?.currentId;
     const now = Date.now();
-    if (!this.commentsEnabled() || !videoId) return { accepted: false, hint: "Close my menu and I'll read comments!" };
-    if (this.state.bubble || this.speaking) return { accepted: false, retryAfterMs: 500, hint: "One sec, I'm still talking!" };
-    if (!commentPosition(target, window.innerWidth, window.innerHeight)) return { accepted: false, hint: 'I need a bit more room to sit by the comments!' };
-    if (this.seenComments.has(target.text)) return { accepted: false, hint: 'We read that one! Pick another?' };
-    if (this.seenComments.size >= 100) return { accepted: false, hint: "That's lots of comments! Let's watch the next one." };
+    if (!this.commentsEnabled() || !videoId) return { accepted: false, hint: 'Close buddy settings to read comments.' };
+    if (this.state.bubble || this.speaking) return { accepted: false, retryAfterMs: 500, hint: 'Finishing this reaction…' };
+    if (!commentPosition(target, window.innerWidth, window.innerHeight)) return { accepted: false, hint: 'No room beside comments. Try a wider window.' };
+    if (this.seenComments.has(target.text)) return { accepted: false, hint: 'Already read this one. Try a different comment.' };
+    if (this.seenComments.size >= 100) return { accepted: false, hint: 'Comment limit reached for this Short. Swipe to start fresh.' };
     // No wait between comment visits (no cooldown, no reading gap). A bubble still on screen is handled above.
     this.cancelCommentVisit();
     const requestId = newId();
@@ -416,7 +301,6 @@ export class Controller {
     this.commentAttempt = { requestId, videoId, readyAt: now + travel, expiresAt: now + 12_000, handled: false };
     this.seenComments.add(target.text);
     this.set({ commentVisit: { ...target, requestId, phase: 'running', emotion: null } });
-    this.syncTalkContext();
     this.emit({ type: 'status', videoId, note: 'reading a selected comment' });
     void this.requestComment(target, requestId, videoId);
     this.tick();
@@ -485,155 +369,246 @@ export class Controller {
     if (!res.reactions?.length) attempt.expiresAt = Math.min(attempt.expiresAt, now + 2500);
   }
 
-  private minImportance: number | null = null; // from the backend /ui (null = follow the frequency setting)
-
   private applyEngineOpts() {
-    this.engine.opts = { frequency: this.state.settings.frequency, voiceEnabled: this.state.settings.voice, minImportance: this.minImportance };
-  }
-
-  private setMinImportance(value: number | null | undefined) {
-    if (value === undefined) return; // an older backend that doesn't send it
-    if (value === this.minImportance) return;
-    this.minImportance = value;
-    this.applyEngineOpts();
-    console.log(LOG, value === null ? 'reaction threshold: following the frequency setting' : `reaction threshold set in /ui: ${value}`);
+    this.engine.opts = { frequency: this.state.settings.frequency, voiceEnabled: this.state.settings.voice };
   }
 
   /** Stop all processing immediately. */
   // ---------- webcam (opt-in, on-device MediaPipe; only labels arrive here) ----------
   private startCamera() {
     this.set({ camera: 'starting' });
-    sendBg({ type: 'CAMERA_START' }).catch(() => this.set({ camera: 'error' }));
+    const st = this.state.settings;
+    sendBg({ type: 'CAMERA_START', gaze: st.eyeTrack || st.eyeControl }).catch(() => this.set({ camera: 'error' }));
   }
 
   private stopCamera() {
     sendBg({ type: 'CAMERA_STOP' }).catch(() => undefined);
     this.set({ camera: 'off', user: null });
+    this.clearGaze();
   }
 
-  private userFlags(): { userAway: boolean; userLaughing: boolean } {
-    const u = this.state.settings.userCam && this.state.camera === 'on' ? this.state.user : null;
+  // ---------- eye tracking (opt-in; the model runs in the camera page, only screen points arrive) ----------
+  openGazeCalibration() {
+    sendBg({ type: 'OPEN_GAZE_CALIBRATION' }).catch(() => undefined);
+    this.set({ note: 'Calibrate in the tab that opened (about 30 s), then come back.' });
+  }
+
+  private async loadGazeModelInfo() {
+    let m: GazeModelData | undefined;
+    try {
+      m = (await chrome.storage.local.get(GAZE_MODEL_KEY))[GAZE_MODEL_KEY] as GazeModelData | undefined;
+    } catch {
+      m = undefined;
+    }
+    this.set({ gaze: { ...this.state.gaze, calibrated: !!m, error: m?.error ?? null } });
+  }
+
+  private clearGaze() {
+    this.gazeDwell.reset();
+    this.gazePoint = null;
+    if (this.state.gaze.zone || this.state.gaze.look) this.set({ gaze: { ...this.state.gaze, zone: null, look: null } });
+  }
+
+  private gazeActive(): boolean {
+    const st = this.state.settings;
+    return st.enabled && st.userCam && st.eyeTrack && this.state.gaze.calibrated &&
+      this.state.camera === 'on' && Date.now() - this.lastGazeAt < 1500;
+  }
+
+  private zoneRects() {
+    const vis = (el: Element | null | undefined): Rect | null => {
+      const r = el?.getBoundingClientRect();
+      if (!r || r.width < 10 || r.height < 10 || r.right < 0 || r.left > window.innerWidth) return null;
+      return { x: r.left, y: r.top, width: r.width, height: r.height };
+    };
+    const panels = Array.from(document.querySelectorAll(PANEL)).map(vis).filter((r): r is Rect => !!r);
     return {
-      userAway: !this.demoMode && !!u && (u.lookingAway || !u.present),
-      userLaughing: !!u && u.expression === 'laughing',
+      video: vis(this.watcher?.video),
+      comments: panels.sort((a, b) => b.width * b.height - a.width * a.height)[0] ?? null,
+      mochi: vis(this.host.shadowRoot?.querySelector('.sm-companion')),
     };
   }
 
-  // ---------- Mochi kindly notices the child's feeling ("You're smiling! Did that make you happy?") ----------
-  private feelings = new FeelingNoticer();
-  private feelingShort: { id: string | null; at: number } = { id: null, at: 0 };
+  private onGaze(fx: number, fy: number) {
+    if (!this.state.settings.eyeTrack || !this.state.settings.userCam || !this.state.gaze.calibrated) return;
+  // ---------- Eye Control (hands-free): big edge buttons, chosen by looking (dwell) or a long blink ----------
+  private dwell = new DwellSelector(1500);
+  private lastChoosingAt = 0;
 
-  private tickFeelings(videoId: string | null, now: number) {
-    if (videoId !== this.feelingShort.id) this.feelingShort = { id: videoId, at: now };
-    const st = this.state.settings, u = this.state.user;
-    if (!u) return;
-    const expression = this.feelings.update({
-      now,
-      enabled: st.enabled && st.userCam && this.state.camera === 'on',
-      videoId,
-      shortStartedAt: this.feelingShort.at,
-      present: u.present,
-      lookingAway: u.lookingAway,
-      expression: u.expression,
-      strength: u.strength,
-      busy: !!this.state.bubble || this.speaking || !!this.state.commentVisit,
-    });
-    if (expression && videoId) void this.noticeFeeling(videoId, expression);
+  private eyeControlOn() {
+    const st = this.state.settings;
+    return st.enabled && st.userCam && st.eyeControl && this.state.camera === 'on';
   }
 
-  private async noticeFeeling(videoId: string, expression: string) {
-    const epoch = this.epoch;
-    const { personality } = this.state.settings;
-    const title = this.demo ? this.demo.short.title : this.ctx?.title ?? '';
-    console.log(LOG, 'noticing your feeling:', expression);
-    this.emit({ type: 'user', videoId, feelingNoticed: expression });
-    try {
-      const res = await sendBg<FeelingLineResponse>({ type: 'FEELING_LINE', videoId, expression, title, personality });
-      const now = Date.now();
-      const u = this.state.user;
-      const current = this.demo ? this.demo.short.videoId : this.watcher?.currentId;
-      // still a good moment? same Short, nothing else on screen, child still here
-      const blocked = (this.state.bubble && !this.demoMode) || this.speaking || this.state.commentVisit;
-      if (epoch !== this.epoch || !res?.line || current !== videoId || blocked || !u?.present || u.lookingAway) return;
-      if (res.emotion) this.cues.fireNow(videoId, res.emotion, 0.8, this.snapshot().currentTime, now);
-      this.deliver({
-        candidate: {
-          id: newId(), text: res.line, importance: 1, targetVideoId: videoId, preferredTiming: 'now', expiresAfterSeconds: 8,
-          requiresQuietMoment: false, isCallback: false, createdAt: now, move: res.move,
-        },
-        mode: this.state.settings.voice ? 'voice' : 'bubble',
-        reason: `noticed you looked ${expression}${res.source === 'fallback' ? ' (written line)' : ''}`,
-      });
-    } catch {
-      /* no line this time */
-    } finally {
-      this.feelings.done();
+  private onEyeControlGaze(fx: number, fy: number, rough: boolean, now: number) {
+    const ec = this.state.eyeControl;
+    const r = this.dwell.update(controlTarget({ x: fx, y: fy }, ec.target), now);
+    if (r.target) this.lastChoosingAt = now;
+    if (r.fired) {
+      this.set({ eyeControl: { target: null, progress: 0, rough, chosen: { target: r.fired, at: now } } });
+      void this.eyeAction(r.fired, r.via ?? 'dwell', rough);
+      return;
+    }
+    if (r.target !== ec.target || Math.abs(r.progress - ec.progress) >= 0.05 || rough !== ec.rough)
+      this.set({ eyeControl: { ...ec, target: r.target, progress: r.progress, rough } });
+  }
+
+  private onLongBlink() {
+    if (!this.eyeControlOn()) return;
+    const now = Date.now();
+    const r = this.dwell.confirm(now);
+    if (!r.fired) return;
+    const rough = this.state.eyeControl.rough;
+    this.set({ eyeControl: { target: null, progress: 0, rough, chosen: { target: r.fired, at: now } } });
+    void this.eyeAction(r.fired, 'blink', rough);
+  }
+
+  isPaused(): boolean {
+    return this.demo ? !!this.state.demo?.paused : !!this.watcher?.video?.paused;
+  }
+
+  /** Mouse/keyboard fallback for carers: same actions as looking. */
+  chooseEyeControl(target: ControlTarget) {
+    void this.eyeAction(target, 'click', this.state.eyeControl.rough);
+  }
+
+  private async eyeAction(target: ControlTarget, via: 'dwell' | 'blink' | 'click', rough: boolean) {
+    const videoId = this.demo ? this.demo.short.videoId : this.watcher?.currentId ?? null;
+    console.log(LOG, 'eye control:', target, `(${via}${rough ? ', rough' : ''})`);
+    this.emit({ type: 'user', videoId, eyeControl: target, via, rough, dwellMs: this.state.settings.eyeControlDwellMs });
+    if (videoId) this.cues.fireNow(videoId, 'happy', 0.8, this.snapshot().currentTime, Date.now()); // "got it!"
+    if (target === 'next') {
+      if (this.demo) this.demoNext();
+      else {
+        const btn = document.querySelector<HTMLElement>('#navigation-button-down button') ?? document.querySelector<HTMLElement>('#navigation-button-down');
+        if (btn) btn.click();
+        else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, bubbles: true }));
+      }
+    } else if (target === 'pause') {
+      if (this.demo) this.demoTogglePause();
+      else {
+        const v = this.watcher?.video;
+        if (v) { if (v.paused) void v.play().catch(() => undefined); else v.pause(); }
+      }
+    } else {
+      await this.talkNow(videoId);
+    }
+    this.tick();
+  }
+
+  /** "Talk to Mochi": a line about this Short right away (the child asked, so no waiting rules). */
+  private async talkNow(videoId: string | null) {
+    const { personality, frequency } = this.state.settings;
+    let text: string | null = null;
+    if (videoId) {
+      try {
+        const r = await sendBg<ReactResponse>({ type: 'REACT_ONLY', currentVideoId: videoId, personality, frequency });
+        text = r?.reactions?.[0]?.text ?? null;
+      } catch {
+        /* fall back below */
+      }
+    }
+    text ??= ['I\'m still watching it with you! 👀', 'Hi! I\'m right here 😊', 'This one\'s fun to watch together!'][Math.floor(Math.random() * 3)];
+    this.deliver({
+      candidate: {
+        id: newId(), text, importance: 1, targetVideoId: videoId ?? '', preferredTiming: 'now', expiresAfterSeconds: 10,
+        requiresQuietMoment: false, isCallback: false, createdAt: Date.now(),
+      },
+      mode: this.state.settings.voice ? 'voice' : 'bubble',
+      reason: 'you asked with your eyes',
+    });
+  }
+
+  private onGaze(fx: number, fy: number, rough = false) {
+    const now = Date.now();
+    if (this.eyeControlOn()) {
+      // rough gaze is already a fraction of the screen; calibrated gaze -> this window's viewport fraction
+      let f = { x: fx, y: fy };
+      if (!rough) {
+        const scr = screen as Screen & { availLeft?: number };
+        const v = screenToViewport({ x: fx, y: fy }, window, { width: scr.width, height: scr.height, left: scr.availLeft ?? 0, top: 0 });
+        f = { x: v.x / window.innerWidth, y: v.y / window.innerHeight };
+      }
+      this.onEyeControlGaze(f.x, f.y, rough, now);
+    }
+    // zones, Mochi's look and pacing need calibrated gaze
+    if (rough || !this.state.settings.eyeTrack || !this.state.settings.userCam) return;
+    this.lastGazeAt = now;
+    const scr = screen as Screen & { availLeft?: number };
+    const p = screenToViewport({ x: fx, y: fy }, window, { width: scr.width, height: scr.height, left: scr.availLeft ?? 0, top: 0 });
+    this.gazePoint = p;
+    const raw = gazeZone(p, this.zoneRects(), { w: window.innerWidth, h: window.innerHeight }, this.gazeDwell.zone);
+    const changed = this.gazeDwell.update(raw, now);
+    const videoId = this.demo ? this.demo.short.videoId : this.watcher?.currentId;
+    if (changed) {
+      this.set({ gaze: { ...this.state.gaze, zone: changed } });
+      this.emit({ type: 'user', videoId: videoId ?? null, gazeZone: changed });
+      console.log(LOG, 'gaze zone:', changed);
+    }
+    this.updateLook(p);
+    // Eye contact: looking at Mochi for 0.7 s -> a happy face back (a face, never a bubble), at most every 15 s.
+    if (
+      this.gazeDwell.zone === 'mochi' && now - this.gazeDwell.since > 700 && now - this.lastEyeContact > 15_000 &&
+      videoId && !this.state.bubble && !this.state.commentVisit && this.state.settings.enabled
+    ) {
+      this.lastEyeContact = now;
+      this.cues.fireNow(videoId, 'happy', 0.8, this.snapshot().currentTime, now);
+      this.emit({ type: 'user', videoId, gazeZone: 'mochi', eyeContact: true });
+      console.log(LOG, 'eye contact: smiling back');
     }
   }
 
-  private lastFeeling: { expression: UserSignal['expression']; at: number } | null = null;
-
-  /** The child's feeling in the last 5 s (label only), to blend into the reel comment. */
-  private viewerFeeling(): UserSignal['expression'] | undefined {
-    const st = this.state.settings, u = this.state.user;
-    if (!st.userCam || this.state.camera !== 'on' || !this.lastFeeling) return undefined;
-    if (u && (!u.present || u.lookingAway)) return undefined;
-    return Date.now() - this.lastFeeling.at < 5_000 ? this.lastFeeling.expression : undefined;
+  /**
+   * Mochi's eyes follow yours: it looks toward the point you're looking at (shared attention), and straight
+   * back at you when you look at it. Direction is -1..1, quantised so React only re-renders on a real change.
+   */
+  private updateLook(p: { x: number; y: number }) {
+    const el = this.host.shadowRoot?.querySelector('.sm-companion');
+    const r = el?.getBoundingClientRect();
+    if (!r) return;
+    let look = { x: 0, y: 0 };
+    if (this.gazeDwell.zone !== 'mochi') {
+      const dx = p.x - (r.left + r.width / 2), dy = p.y - (r.top + r.height / 2);
+      const dist = Math.hypot(dx, dy) || 1;
+      const reach = Math.min(1, dist / 350); // far away = eyes all the way over
+      const q = (v: number) => Math.round(v * 4) / 4;
+      look = { x: q((dx / dist) * reach), y: q((dy / dist) * reach) };
+    }
+    const cur = this.state.gaze.look;
+    if (!cur || cur.x !== look.x || cur.y !== look.y) this.set({ gaze: { ...this.state.gaze, look } });
   }
 
-  /** A reel line that carried a feeling counts as noticing it (no separate "noticed" line on this Short). */
-  private noteBlended(videoId: string, feeling: UserSignal['expression'] | undefined, lines: number) {
-    if (feeling && lines > 0 && !this.demoMode) this.feelings.markNoticed(videoId, feeling, Date.now());
-  }
-
-  // ---------- demo mode (set in /ui): reliable for presenting ----------
-  private demoMode = false;
-
-  private setDemoMode(on: boolean | undefined) {
-    if (typeof on !== 'boolean' || on === this.demoMode) return;
-    this.demoMode = on;
-    this.feelings.demo = on;
-    console.log(LOG, on ? 'demo mode on: guaranteed comments, faster feelings, no "looked away" holds' : 'demo mode off');
-  }
-
-  // ---------- "I see you!" pop: makes the face reading visible ----------
-  private popTimer: number | undefined;
-  private lastPopAt = 0;
-  private popSeq = 0;
-
-  private showMirrorPop(expression: UserSignal['expression']) {
-    const text = MIRROR_POP[expression];
-    const now = Date.now();
-    if (!text || now - this.lastPopAt < 2_500) return;
-    this.lastPopAt = now;
-    window.clearTimeout(this.popTimer);
-    this.set({ mirrorPop: { id: ++this.popSeq, text } });
-    this.popTimer = window.setTimeout(() => this.set({ mirrorPop: null }), 1_800);
+  private userFlags(): { userAway: boolean; userLaughing: boolean; userReadingComments: boolean; userEyesElsewhere: boolean; userChoosing: boolean } {
+    const u = this.state.settings.userCam && this.state.camera === 'on' ? this.state.user : null;
+    const zone = this.gazeActive() ? this.gazeDwell.zone : null;
+    return {
+      // A drifting gaze model cannot overrule the camera seeing the viewer facing the screen.
+      // Only face/head signals establish absence; gaze is a softer attention hint.
+      userAway: !!u && (u.lookingAway || !u.present),
+      userLaughing: !!u && u.expression === 'laughing',
+      userReadingComments: zone === 'comments', // eyes on the comment panel: video reactions wait
+      userEyesElsewhere: zone === 'elsewhere' || zone === 'off_screen',
+      userEyesElsewhere: zone === 'elsewhere', // eyes on another part of the page: wait until they're free
+      userChoosing: this.eyeControlOn() && Date.now() - this.lastChoosingAt < 600, // a button is glowing
+    };
   }
 
   private onUserSignal(sig: UserSignal) {
     const prev = this.state.user;
     this.set({ user: sig });
-    // remember the last real feeling; viewerFeeling() keeps it for 5 s after it fades
-    if (sig.present && !sig.lookingAway && sig.expression !== 'neutral') this.lastFeeling = { expression: sig.expression, at: Date.now() };
     this.emit({ type: 'user', expression: sig.expression, present: sig.present, lookingAway: sig.lookingAway });
     if (!this.state.settings.enabled || !this.state.settings.userCam) return;
     // Mirror the viewer: laugh along, look surprised with them (a face, never a bubble).
     const mirror = USER_TO_EMOTION[sig.expression];
     const videoId = this.demo ? this.demo.short.videoId : this.watcher?.currentId;
-    if (mirror && videoId && sig.expression !== prev?.expression && sig.present && !sig.lookingAway) {
-      this.showMirrorPop(sig.expression); // visible proof the face reading works
-      if (!this.state.bubble) {
-        this.cues.fireNow(videoId, mirror, Math.max(0.6, sig.strength), this.snapshot().currentTime, Date.now());
-        console.log(LOG, 'mirroring you:', sig.expression);
-      }
+    if (mirror && videoId && sig.expression !== prev?.expression && !this.state.bubble) {
+      this.cues.fireNow(videoId, mirror, Math.max(0.6, sig.strength), this.snapshot().currentTime, Date.now());
+      console.log(LOG, 'mirroring you:', sig.expression);
     }
     this.tick();
   }
 
   private onCameraStatus(state: CameraState, detail?: string) {
-    // A status still in flight when the camera was switched off must not bring the badge back.
-    if (state !== 'off' && !(this.state.settings.enabled && this.state.settings.userCam)) return;
     this.set({ camera: state });
     if (state === 'needs_permission') this.set({ note: 'Allow the camera in the tab that just opened, then come back.' });
     else if (state === 'error') this.set({ note: `Camera unavailable (${(detail ?? '').slice(0, 80)}).` });
@@ -641,8 +616,6 @@ export class Controller {
   }
 
   private disable() {
-    this.endTalk();
-    this.discussedComment = null;
     this.epoch++;
     this.cancelCommentVisit();
     this.comments?.reset();
@@ -659,8 +632,6 @@ export class Controller {
   }
 
   async clearMemory() {
-    this.endTalk();
-    this.discussedComment = null;
     this.epoch++;
     this.cancelCommentVisit();
     this.comments?.reset();
@@ -712,10 +683,9 @@ export class Controller {
   /** Forward new timing-engine decisions to the feed. */
   private flushDecisions() {
     const log = this.engine.log;
-    const total = this.engine.logTotal; // monotonic, so trimming or clearing the log never stalls the feed
-    const start = total - log.length;
-    for (this.logSent = Math.max(this.logSent, start); this.logSent < total; this.logSent++) {
-      const d = log[this.logSent - start];
+    if (this.logSent > log.length) this.logSent = 0; // log was cleared or trimmed
+    for (; this.logSent < log.length; this.logSent++) {
+      const d = log[this.logSent];
       this.emit({
         type: 'decision',
         videoId: d.inputs.videoOnScreen,
@@ -750,7 +720,6 @@ export class Controller {
         muted: false,
         audioQuiet: true, // the demo has no soundtrack
         navTimes: this.navTimes,
-        bubbleVisible: !!this.state.bubble || this.speaking,
         ...this.userFlags(),
       };
     }
@@ -771,25 +740,18 @@ export class Controller {
       commentRequestId: this.commentAttempt?.requestId ?? null,
       commentReady: this.state.commentVisit?.phase !== 'running',
       readingComments: !!this.commentAttempt || !!this.state.commentHint,
-      commentsOpen: this.commentsOpen && this.commentsEnabled(),
-      conversationBusy: this.talkBusy(),
-      bubbleVisible: !!this.state.bubble || this.speaking,
       ...this.userFlags(),
     };
   }
 
   private tick() {
-    if (this.destroyed) return;
     const now = Date.now();
-    if (this.talkTurnId && now >= this.nextTalkContextAt) this.syncTalkContext();
     this.tickComment(now);
-    this.tickCommentsOpen(this.demo ? null : this.watcher?.currentId ?? null, now);
     if (this.demo) {
       this.demo.tick(now);
       this.set({ demo: this.demo.view(now) });
     }
     const snap = this.snapshot();
-    this.tickFeelings(snap.videoId, now);
     if (this.state.settings.enabled) {
       const d = this.engine.tick(snap, now);
       this.flushDecisions(); // log the decision first, then the delivery it caused
@@ -806,7 +768,6 @@ export class Controller {
 
   private computeMood(s: PlaybackSnapshot, now: number): Mood {
     if (!this.state.settings.enabled) return 'sleeping';
-    if (this.state.talk.active && this.state.talk.phase === 'speaking') return 'speaking';
     if (this.state.commentVisit) {
       if (this.state.commentVisit.phase === 'running') return 'curious';
       return this.state.commentVisit.emotion ?? (this.state.commentVisit.phase === 'reading' ? 'thinking' : 'curious');
@@ -815,7 +776,7 @@ export class Controller {
     if (this.state.bubble) return 'amused';
     const emo = this.cues.current(now); // a timed reaction to the moment on screen
     if (emo) return emo;
-    if (this.busy > 0 || this.engine.hasPending() || (this.state.talk.active && this.state.talk.phase === 'thinking')) return 'thinking';
+    if (this.busy > 0 || this.engine.hasPending()) return 'thinking';
     if (now - this.lastActivity > SLEEP_AFTER_MS) return 'sleeping';
     if (s.playing) return 'watching';
     return 'idle';
@@ -826,14 +787,14 @@ export class Controller {
     console.log(LOG, 'DELIVER', d.mode, `"${d.candidate.text}"`, '-', d.reason);
     this.emit({
       type: 'delivered', videoId: d.candidate.targetVideoId, text: d.candidate.text, mode: d.mode, reason: d.reason,
-      move: d.candidate.move ?? null, // the backend journal records which kind of line was shown
+      gazeZone: this.gazeActive() ? this.gazeDwell.zone : null, // where your eyes were when it spoke
     });
     window.clearTimeout(this.bubbleTimer);
     this.set({ bubble: { id: d.candidate.id, text: d.candidate.text, commentRequestId: d.candidate.commentRequestId } });
     const linger = Math.min(8000, Math.max(4000, d.candidate.text.length * 75));
     if (d.candidate.commentRequestId === this.commentAttempt?.requestId && this.commentAttempt)
       this.commentAttempt.expiresAt = Date.now() + linger + 1000;
-    if (d.mode === 'voice' && this.state.settings.voice && this.speaker.available && !this.talkBusy()) {
+    if (d.mode === 'voice' && this.state.settings.voice && this.speaker.available) {
       this.speaker.speak(
         d.candidate.text,
         () => {
@@ -898,7 +859,6 @@ export class Controller {
   }
 
   private onShortChange(info: ShortInfo, prev: LeftInfo | null) {
-    this.discussedComment = null;
     this.lastActivity = Date.now();
     if (this.demo) return;
     this.cancelCommentVisit();
@@ -909,7 +869,6 @@ export class Controller {
     if (prev) this.handleLeft(prev);
     const prevTitle = this.ctx?.title ?? '';
     const ctx = (this.ctx = this.newCtx(info.videoId));
-    this.syncTalkContext();
     if (!this.state.settings.enabled) return;
     sendBg({ type: 'SHORT_STARTED', videoId: info.videoId }).catch(() => undefined);
     // YouTube updates the active reel's title a moment after the URL changes; skip a stale title.
@@ -921,12 +880,10 @@ export class Controller {
         return;
       }
       ctx.title = title;
-      this.syncTalkContext();
       this.emit({ type: 'short_started', videoId: info.videoId, title, channel });
       void this.swipeStep(ctx, title, channel);
     };
     window.setTimeout(() => readTitle(0), 150);
-    if (this.watcher?.video && !this.watcher.video.paused) this.onPlayback('play', this.watcher.video);
     this.tick();
   }
 
@@ -948,8 +905,6 @@ export class Controller {
         personality: this.state.settings.personality,
         frequency: this.state.settings.frequency,
       });
-      this.setDemoMode(res?.demoMode);
-      this.setMinImportance(res?.minImportance);
       // Frames are more trustworthy than the title: never overwrite a face from frame analysis.
       if (!this.isCurrent(ctx) || ctx.frameCount > 0 || !res?.emotion) return;
       if (res.emotion !== rule.emotion) this.showFace(ctx, res.emotion, 0.6, 'title AI');
@@ -974,8 +929,6 @@ export class Controller {
   }
 
   private onLeaveShorts(prev: LeftInfo | null) {
-    this.endTalk();
-    this.discussedComment = null;
     this.cancelCommentVisit();
     this.comments?.reset();
     if (prev) this.handleLeft(prev);
@@ -1039,7 +992,6 @@ export class Controller {
     const at = Math.round(video.currentTime * 10) / 10;
     this.emit({ type: 'status', videoId: ctx.videoId, note: `captions sent: ${lines.join(' | ').slice(0, 200)}`, t: at });
     try {
-      const feeling = this.viewerFeeling();
       const res = await sendBg<CaptionReactResponse>({
         type: 'CAPTION_REACT',
         videoId: ctx.videoId,
@@ -1049,11 +1001,9 @@ export class Controller {
         currentTime: at,
         personality: this.state.settings.personality,
         frequency: this.state.settings.frequency,
-        viewerFeeling: feeling,
       });
       if (!this.isCurrent(ctx)) return; // scrolled away
       if (res?.emotion) this.showFace(ctx, res.emotion, 0.8, 'captions', at);
-      this.noteBlended(ctx.videoId, feeling, res?.reactions?.length ?? 0);
       this.propose(res?.reactions ?? []);
     } catch {
       /* backend down: captions are optional */
@@ -1067,7 +1017,7 @@ export class Controller {
     ctx.capturing = true;
     const t = Math.round(video.currentTime * 10) / 10;
     const duration = isFinite(video.duration) ? video.duration : 0;
-    const { frame, source } = await this.grabFrame(video, () => this.isCurrent(ctx));
+    const { frame, source } = await this.grabFrame(video);
     ctx.capturing = false;
     if (!this.isCurrent(ctx)) return;
     ctx.frameCount++;
@@ -1081,7 +1031,6 @@ export class Controller {
     this.busy++;
     this.tick();
     try {
-      const feeling = this.viewerFeeling();
       const res = await sendBg<ObserveResponse>({
         type: 'OBSERVE',
         videoId: ctx.videoId,
@@ -1095,31 +1044,18 @@ export class Controller {
         captions,
         personality: this.state.settings.personality,
         frequency: this.state.settings.frequency,
-        viewerFeeling: feeling,
       });
       if (!this.isCurrent(ctx)) return;
-      this.setDemoMode(res?.demoMode);
-      this.setMinImportance(res?.minImportance);
-      if (typeof res?.maxFrames === 'number' && res.maxFrames > 0) ctx.maxFrames = res.maxFrames;
-      if (!res || res.error) {
-        // The backend answered but its vision model missed this frame: handled by retrying, so not an extension error.
-        // Unreachable backends and HTTP failures stay warnings, because they need fixing.
-        const handled = !!res?.error && !res.error.includes('HTTP') && !/fetch|abort/i.test(res.error);
-        (handled ? console.info : console.warn)(LOG, 'reel observation unavailable:', res?.error ?? 'empty response');
-        this.set({ note: 'Reel analysis unavailable. Retrying a later frame.' });
-        if (res?.final || index >= ctx.maxFrames) ctx.done = true;
-        else ctx.nextAt = Math.max(t + 3, video.currentTime + 1.5);
-        return;
-      }
+      if (res?.error) this.set({ note: `Backend unreachable or failed (${res.error.slice(0, 60)}). Staying quiet.` });
       if (res?.emotion && res.level >= 1) this.showFace(ctx, res.emotion, res.level >= 3 ? 1 : 0.8, `frame ${index}`, t);
       // No "avoid" time: the line is a reaction to a moment that just happened, so showing it now is the point.
       // (Level 2-3 lines are marked 'now' by the backend; the timing engine still applies the reading gap.)
-      this.noteBlended(ctx.videoId, feeling, res?.reactions?.length ?? 0);
       this.propose(res?.reactions ?? []);
       // Plan the next frame: trust the model's guess only within sane bounds.
       const now = video.currentTime;
       let next = res?.nextCaptureAt ?? null;
       if (next !== null) next = Math.max(next, t + MIN_FRAME_GAP_S, now + 0.3);
+      if (typeof res?.maxFrames === 'number' && res.maxFrames > 0) ctx.maxFrames = res.maxFrames;
       if (res?.final || next === null || index >= ctx.maxFrames || (duration > 0 && next > duration - 0.5)) ctx.done = true;
       else ctx.nextAt = next;
       this.emit({
@@ -1139,13 +1075,11 @@ export class Controller {
   }
 
   /** Screenshot (character hidden, cropped) -> video canvas -> nothing (text only). */
-  private async grabFrame(video: HTMLVideoElement, wanted: () => boolean): Promise<{ frame: string | null; source: UiState['frameSource'] }> {
+  private async grabFrame(video: HTMLVideoElement): Promise<{ frame: string | null; source: UiState['frameSource'] }> {
     const r = video.getBoundingClientRect();
     const rect: Rect = { x: Math.max(0, r.left), y: Math.max(0, r.top), width: Math.min(r.width, window.innerWidth), height: Math.min(r.height, window.innerHeight) };
     this.host.style.visibility = 'hidden';
     await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
-    // Switched off or swiped away while hidden: never capture the screen after that.
-    if (!wanted()) { this.host.style.visibility = ''; return { frame: null, source: 'text' }; }
     try {
       const resp = await sendBg<CaptureResponse>({ type: 'CAPTURE_FRAME', rect, viewport: { w: window.innerWidth, h: window.innerHeight } });
       if (resp?.ok) return { frame: resp.data, source: 'screen' };
@@ -1154,7 +1088,6 @@ export class Controller {
     } finally {
       this.host.style.visibility = '';
     }
-    if (!wanted()) return { frame: null, source: 'text' };
     try {
       const scale = Math.min(1, 512 / Math.max(video.videoWidth || 1, video.videoHeight || 1));
       const c = document.createElement('canvas');
@@ -1164,7 +1097,7 @@ export class Controller {
       const frame = c.toDataURL('image/jpeg', 0.72).split(',')[1] ?? null;
       if (frame) return { frame, source: 'canvas' };
     } catch (e) {
-      console.info(LOG, 'canvas fallback unavailable, using title and captions only:', (e as Error).name);
+      console.warn(LOG, 'canvas fallback failed:', (e as Error).name);
     }
     return { frame: null, source: 'text' };
   }
