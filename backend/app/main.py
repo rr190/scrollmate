@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
@@ -32,6 +32,8 @@ from .journal import journal
 from .tools import maybe_recall
 from .gemini_live import is_live, live
 from .llm import ping, race, structured, warm_up
+from .talk import TalkRequest, TalkResponse, respond as talk_respond
+from .talk_live import serve as serve_live_talk
 from .models import (
     AnalyseRequest,
     Analysis,
@@ -93,6 +95,17 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="ScrollMate backend", version="0.1.0", lifespan=lifespan)
+
+
+@app.websocket("/scrollmate/talk/live")
+async def talk_live(ws: WebSocket):
+    await serve_live_talk(ws)
+
+
+@app.post("/scrollmate/talk", response_model=TalkResponse, response_model_by_alias=True)
+async def talk(req: TalkRequest, request: Request) -> TalkResponse:
+    rate_limit(request)
+    return await talk_respond(req, request)
 
 # CORS restricted to the extension's origin (set SCROLLMATE_EXTENSION_ORIGIN once you know the ID).
 if config.EXTENSION_ORIGIN:

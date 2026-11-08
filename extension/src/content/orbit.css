@@ -62,3 +62,16 @@
 .sm-orbit-menu button:focus-visible { outline: 2px solid #9c6cd7; outline-offset: 3px; }
 @media (max-width: 480px) { .sm-ring-choice { font-size: 10px; } .sm-orbit-power-label { font-size: 10px; } }
 @media (prefers-reduced-motion: reduce) { .sm-orbit-menu { animation: none; } .sm-ring-choice, .sm-orbit-avatar { transition: none; } }
+
+.sm-talk-launch { position: absolute; left: calc(50% + var(--sm-buddy-width) / 2 + 12px); top: 50%; transform: translate(-50%, -50%); pointer-events: auto; display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid #cbb4f2; border-radius: 50%; color: #7550b0; background: #faf6ff; cursor: pointer; }
+.sm-talk-launch svg { width: 15px; height: 15px; }
+.sm-talk-launch:disabled { opacity: .45; cursor: default; }
+.sm-talk-control { position: absolute; inset: 0; pointer-events: none; }
+.sm-talk-toggle { position: absolute; right: 0; bottom: 0; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; pointer-events: auto; border: 0; border-radius: 50%; background: transparent; color: #674294; cursor: pointer; }
+.sm-talk-toggle::before { content: ''; position: absolute; inset: 5px; border: 1px solid #cbb4f2; border-radius: 50%; background: #faf6ff; box-shadow: 0 2px 8px #24123122; }
+.sm-talk-toggle svg { position: relative; width: 17px; height: 17px; }
+.sm-talk-toggle.sm-talk-active { color: #fff; }
+.sm-talk-active::before { background: #76509f; border-color: #76509f; }
+.sm-talk-toggle:focus-visible { outline: 3px solid #8055ac; outline-offset: 2px; }
+.sm-talk-status { position: absolute; top: calc(100% + 3px); left: 0; padding: 3px 8px; border: 1px solid #dfd0f1; border-radius: 10px; color: #513479; background: #faf7ff; white-space: nowrap; font: 600 11px/1.4 system-ui, sans-serif; }
+.sm-right .sm-talk-status { left: auto; right: 0; }

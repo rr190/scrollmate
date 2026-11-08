@@ -82,6 +82,7 @@ function visibleRect(el: HTMLElement, anchor?: { x: number; y: number }): Rect |
 /** Local pointer intent only. No page reads are sent until onSelect accepts a deliberate dwell. */
 export class CommentsWatcher {
   private candidate: HTMLElement | null = null;
+  private focused: HTMLElement | null = null;
   private active: { element: HTMLElement; target: CommentTarget } | null = null;
   private dwell: number | undefined;
   private poll: number | undefined;
@@ -95,6 +96,7 @@ export class CommentsWatcher {
   constructor(private cb: {
     enabled(): boolean;
     onSelect(target: CommentTarget): CommentSelection;
+    onFocus?(target: CommentTarget): void;
     onCancel(): void;
     onHint(message: string | null): void;
   }) {}
@@ -123,6 +125,7 @@ export class CommentsWatcher {
   reset() {
     window.clearTimeout(this.dwell);
     this.candidate = null;
+    this.focused = null;
     this.failedReads = 0;
     this.cb.onHint(null);
     if (this.active) { this.active = null; this.cb.onCancel(); }
@@ -139,7 +142,7 @@ export class CommentsWatcher {
     const el = ev.target instanceof Element ? ev.target : null;
     // A visit stays put when the pointer leaves. A new deliberate selection can replace it later.
     const eligible = commentTextAt(el);
-    if (eligible === this.active?.element) return;
+    if (eligible === this.active?.element && eligible === this.focused) return;
     if (eligible === this.candidate && Math.hypot(ev.clientX - this.origin.x, ev.clientY - this.origin.y) < 8) return;
     window.clearTimeout(this.dwell);
     this.candidate = eligible;
@@ -191,6 +194,9 @@ export class CommentsWatcher {
     }
     const previous = this.active;
     this.active = { element, target };
+    this.focused = element;
+    // Discussion intent is independent of cooldowns, prior reactions and room to move.
+    this.cb.onFocus?.(target);
     const result = this.cb.onSelect(target);
     if (!result.accepted) {
       this.active = previous;
@@ -198,6 +204,20 @@ export class CommentsWatcher {
       if (result.retryAfterMs && this.candidate === element)
         this.dwell = window.setTimeout(() => this.select(element), Math.max(250, Math.min(1000, result.retryAfterMs)));
     } else this.cb.onHint(null);
+  }
+
+  discussionContext(): { commentsOpen: boolean; visibleComments: string[] } {
+    const visibleComments: string[] = [];
+    if (document.hidden) return { commentsOpen: false, visibleComments };
+    for (const el of document.querySelectorAll<HTMLElement>(TEXT)) {
+      if (!el.closest(COMMENT) || el.closest('ytd-comment-replies-renderer, #replies') || !el.closest(PANEL)) continue;
+      if (!visibleRect(el)) continue;
+      const text = normalize(el.innerText).slice(0, 500);
+      if (text) visibleComments.push(text);
+      if (visibleComments.length === 6) break;
+    }
+    const commentsOpen = visibleComments.length > 0 || Array.from(document.querySelectorAll<HTMLElement>(PANEL)).some((el) => !!visibleRect(el));
+    return { commentsOpen, visibleComments };
   }
 
   diagnostics() {

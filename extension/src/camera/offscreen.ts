@@ -10,7 +10,8 @@ import {
   BlinkDetector, eyeAspectRatio, FaceSignalTracker, gazeFeatureVector, gazeFeatureVectorPlus, headAngles, isRealBlink,
   KalmanGaze, RidgeGaze, type GazeModelData,
 } from '../shared/faceSignals';
-import type { GazeConfig } from '../shared/messages';
+import type { GazeConfig, TalkContext } from '../shared/messages';
+import { RealtimeVoiceClient } from '../audio/realtimeVoice';
 
 const FRAME_MS = 100; // ~10 fps is plenty for expressions
 const GAZE_FRAME_MS = 40; // ~25 fps while eye tracking (more samples = steadier gaze)
@@ -22,6 +23,7 @@ let timer: number | undefined;
 const tracker = new FaceSignalTracker();
 let frames = 0;
 let lastBeat = 0;
+let starting = false;
 
 // eye tracking (opt-in): the personal model from the calibration page, run on every frame
 let gaze: { model: RidgeGaze; data: GazeModelData; kalman: KalmanGaze; blink: BlinkDetector } | null = null;
@@ -61,6 +63,12 @@ async function createLandmarker(delegate: 'GPU' | 'CPU') {
 }
 
 async function start() {
+  if (starting || stream) return;
+  starting = true;
+  try { await startCamera(); } finally { starting = false; }
+}
+
+async function startCamera() {
   status('starting');
   try {
     // 640x480 like the calibration page: the iris needs the pixels for eye tracking
@@ -141,15 +149,25 @@ function stop() {
   landmarker = null;
 }
 
-// Only react to messages addressed to this page (runtime messages are broadcast to every extension page).
-chrome.runtime.onMessage.addListener((msg: { target?: string; type?: string }) => {
+const microphone = new RealtimeVoiceClient((requestId, event) => { void send({ type: 'TALK_LIVE_EVENT', requestId, event }); });
+
+// Camera and microphone share one offscreen document but have independent tracks and lifecycles.
+chrome.runtime.onMessage.addListener((msg: { target?: string; type?: string; requestId?: string; url?: string; context?: TalkContext }, _sender, reply) => {
   if (msg?.target !== 'offscreen') return false;
+  if (msg.type === 'MEDIA_PING') { reply({ ready: true }); return false; }
+  if (msg.type === 'TALK_START' && msg.url && msg.context) void microphone.start(msg.url, msg.context);
+  if (msg.type === 'TALK_CONTEXT' && msg.context) microphone.update(msg.context);
+  if (msg.type === 'TALK_CANCEL') microphone.cancel(msg.requestId);
+  if (msg.type === 'CAMERA_START') void start();
   if (msg.type === 'GAZE_CONFIG') applyGazeConfig((msg as { config?: GazeConfig }).config);
   if (msg.type === 'CAMERA_STOP') {
     stop();
     status('off');
   }
+  reply({ ok: true });
   return false;
 });
 
-void start();
+void chrome.runtime.sendMessage({ type: 'MEDIA_READY' }).then((state) => {
+  if (state?.camera !== false) void start();
+}).catch(() => undefined);

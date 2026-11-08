@@ -79,6 +79,14 @@ export function RingMenu({ ctl, state, onClose }: { ctl: Controller; state: UiSt
       </button>}
       {st.enabled && state.camera === 'needs_permission' && <span className="sm-orbit-camera-note" role="status">Allow camera in setup tab</span>}
       {st.enabled && state.camera === 'error' && <span className="sm-orbit-camera-note" role="status">Camera unavailable</span>}
+      {ctl.env === 'youtube' && <button type="button" className="sm-talk-launch" aria-label={state.talk.active ? 'Stop talking to buddy' : 'Talk to buddy'}
+        aria-pressed={state.talk.active} disabled={!st.enabled || st.demo}
+        title={st.enabled ? (state.talk.active ? 'Stop talking to buddy' : 'Tap to talk') : 'Turn the buddy on to talk'}
+        onClick={() => { ctl.toggleTalk(); onClose(); }}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <rect x="8" y="2" width="8" height="13" rx="4" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" />
+        </svg>
+      </button>}
       <button type="button" className="sm-orbit-close" aria-label="Close ring" title="Close ring" onClick={onClose}>{'\u00d7'}</button>
     </div>
   </div>;

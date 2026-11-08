@@ -38,6 +38,7 @@ export interface PlaybackSnapshot {
   userLaughing?: boolean; // webcam: the viewer is laughing right now (don't talk over them)
   userReadingComments?: boolean; // eye tracking: the viewer's eyes are on the comment panel
   userEyesElsewhere?: boolean; // eye tracking: eyes on another part of the page (title, sidebar)
+  conversationBusy?: boolean; // Talk owns spoken audio; other reactions can still appear as bubbles.
 }
 
 export interface EngineOptions {
@@ -204,8 +205,8 @@ export function decide(
   const gap = naturalGap(s, now);
   if (gap) {
     const quiet = isQuiet(s);
-    if (opts.voiceEnabled && quiet && !gazeBusy) return v('SPEAK_NOW', `gap_${gap}`, `natural gap (${gap}), quiet: speaking`, 'voice');
-    const why = gazeBusy ? ', gaze uncertain: silent bubble' : opts.voiceEnabled ? ', audio may be playing: silent bubble' : '';
+    if (opts.voiceEnabled && quiet && !gazeBusy && !s.conversationBusy) return v('SPEAK_NOW', `gap_${gap}`, `natural gap (${gap}), quiet: speaking`, 'voice');
+    const why = s.conversationBusy ? ', Talk owns voice: silent bubble' : gazeBusy ? ', gaze uncertain: silent bubble' : opts.voiceEnabled ? ', audio may be playing: silent bubble' : '';
     return v('SPEAK_NOW', `gap_${gap}`, `natural gap (${gap})${why}`, 'bubble');
   }
 

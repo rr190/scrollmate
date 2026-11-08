@@ -15,8 +15,15 @@ const messages: BgRequest[] = [];
 const listeners: ((message: TabMessage) => unknown)[] = [];
 let calibrated = false;
 let reelReaction = false;
+let reelLine = 'That turned out beautifully.';
 let failObservation = true;
 const notify = (message: TabMessage) => listeners.forEach((listener) => listener(message));
+let spoken: SpeechSynthesisUtterance | null = null;
+let microphoneDenied = false;
+Object.defineProperty(window, 'speechSynthesis', { value: {
+  getVoices: () => [], cancel: () => { spoken = null; },
+  speak: (utterance: SpeechSynthesisUtterance) => { spoken = utterance; utterance.onstart?.(new Event('start') as SpeechSynthesisEvent); },
+} });
 Object.defineProperty(window, 'chrome', { value: {
   storage: { local: {
     get: async (keys: string | string[]) => Array.isArray(keys)
@@ -27,6 +34,10 @@ Object.defineProperty(window, 'chrome', { value: {
   runtime: { lastError: null, onMessage: { addListener: (listener: (message: TabMessage) => unknown) => listeners.push(listener) },
     sendMessage: (message: BgRequest, reply: (value: unknown) => void) => {
       messages.push(message);
+      if (message.type === 'TALK_START') {
+        setTimeout(() => notify({ type: 'TALK_EVENT', requestId: message.context.requestId,
+          event: { type: 'status', state: microphoneDenied ? 'needs_permission' : 'listening', error: microphoneDenied ? 'Allow microphone access in the setup tab.' : undefined } }), 20);
+      }
       if (message.type === 'CAMERA_START') setTimeout(() => notify({ type: 'CAMERA_STATUS', state: 'on' }), 20);
       if (message.type === 'CAPTURE_FRAME') { reply({ ok: true, data: 'stubbed-local-frame' }); return; }
       if (message.type === 'OBSERVE' && reelReaction) {
@@ -36,7 +47,7 @@ Object.defineProperty(window, 'chrome', { value: {
           return;
         }
         reply({ emotion: 'impressed', level: 2, change: 'major', final: true, nextCaptureAt: null, reactions: [{
-          text: 'That turned out beautifully.', importance: 0.85, targetVideoId: message.videoId,
+          text: reelLine, importance: 0.85, targetVideoId: message.videoId,
           preferredTiming: 'now', requiresQuietMoment: false, expiresAfterSeconds: 8, isCallback: false,
         }] });
         return;
@@ -73,7 +84,7 @@ function fits() {
   assert(Math.abs(ring.top + ring.height / 2 - buddy.top - buddy.height / 2) < 1, 'ring must surround the real buddy vertically');
   assert(getComputedStyle(shadow.querySelector('.sm-orbit-menu')!).backgroundColor === 'rgba(0, 0, 0, 0)', 'ring must have no rectangular card background');
   assert(shadow.querySelectorAll('.sm-char-btn').length === 1, 'only one main buddy should exist');
-  for (const target of shadow.querySelectorAll<HTMLButtonElement>('.sm-char-btn, .sm-ring-choice, .sm-orbit-avatar, .sm-orbit-close, .sm-orbit-calibrate')) {
+  for (const target of shadow.querySelectorAll<HTMLButtonElement>('.sm-char-btn, .sm-ring-choice, .sm-orbit-avatar, .sm-orbit-close, .sm-orbit-calibrate, .sm-talk-launch:not(:disabled)')) {
     const rect = target.getBoundingClientRect();
     const hit = shadow.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
     assert(hit?.closest('button') === target, `${target.getAttribute('aria-label') ?? target.textContent} must be reachable with a real pointer`);
@@ -156,6 +167,79 @@ async function run() {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await wait(50);
   assert(!shadow.querySelector('.sm-orbit-menu'), 'Escape must close ring'); checkFeatures(true);
   await tapBuddy(); fits();
-  document.getElementById('test-results')!.textContent = 'PASS: buddy-centred ring, master features, calibration, preferences, viewport fit, and reel playback -> frame observation -> reaction bubble despite drifting gaze.';
+  let pauses = 0, resumes = 0;
+  video.pause = () => { pauses++; Object.defineProperty(video, 'paused', { value: true, configurable: true }); video.dispatchEvent(new Event('pause')); };
+  video.play = async () => { resumes++; Object.defineProperty(video, 'paused', { value: false, configurable: true }); video.dispatchEvent(new Event('play')); };
+  button('.sm-talk-launch').click(); await wait(80);
+  assert(ctl.state.talk.active && ctl.state.talk.phase === 'listening' && !shadow.querySelector('.sm-orbit-menu'), 'one ring mic tap starts listening immediately');
+  assert(!shadow.querySelector('.sm-talk-controls, .sm-talk-quick, .sm-talk-input, .sm-talk-record'), 'there is no chat panel, separate launcher or recording form');
+  assert(pauses === 0 && !video.paused, 'the reel keeps playing during Talk');
+  const micButton = button('.sm-talk-toggle');
+  assert(micButton.getAttribute('aria-pressed') === 'true' && micButton.getBoundingClientRect().height >= 44, 'the avatar microphone exposes its state and has a large target');
+  const micRect = micButton.getBoundingClientRect();
+  assert(shadow.elementFromPoint(micRect.x + micRect.width / 2, micRect.y + micRect.height / 2)?.closest('button') === micButton, 'the microphone can be reached by a real pointer');
+  const micBefore = micButton.getBoundingClientRect();
+  const dragBuddy = button('.sm-char-btn');
+  const buddyBefore = dragBuddy.getBoundingClientRect();
+  const dx = buddyBefore.x > innerWidth / 2 ? -60 : 60;
+  dragBuddy.setPointerCapture = () => {};
+  dragBuddy.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 9, button: 0, clientX: buddyBefore.x + 15, clientY: buddyBefore.y + 15 }));
+  await wait(30);
+  dragBuddy.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 9, clientX: buddyBefore.x + 15 + dx, clientY: buddyBefore.y + 15 }));
+  await wait(30);
+  dragBuddy.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 })); await wait(700);
+  const micAfter = micButton.getBoundingClientRect();
+  assert(micAfter.x !== micBefore.x || micAfter.y !== micBefore.y, 'the microphone travels with the avatar');
+  const countBeforeTalk = messages.filter((message) => message.type === 'OBSERVE').length;
+  reelLine = 'The tiny detail makes it.';
+  history.pushState({}, '', '/shorts/liveTalk01'); await wait(1400);
+  assert(ctl.state.talk.active, 'Talk stays open across reel changes');
+  assert(messages.filter((message) => message.type === 'OBSERVE').length > countBeforeTalk, 'reel analysis remains live during Talk');
+  ctl.hideBubble();
+  await ctl.updateSettings({ frequency: 'rare' });
+  notify({ type: 'USER_SIGNAL', signal: { ...user, expression: 'surprised' } }); await wait(20);
+  assert(ctl.state.mood === 'surprised', 'camera expressions remain live while listening');
+  const latestSession = () => messages.filter((message): message is Extract<BgRequest, { type: 'TALK_START' }> => message.type === 'TALK_START').at(-1)!;
+  const voice = (event: Extract<TabMessage, { type: 'TALK_EVENT' }>['event'], requestId = latestSession().context.requestId) => notify({ type: 'TALK_EVENT', requestId, event });
+  const session = latestSession();
+  voice({ type: 'caption', role: 'user', text: 'What do you think of the cake?' });
+  voice({ type: 'status', state: 'thinking' });
+  voice({ type: 'caption', role: 'assistant', text: 'I like the purple' }); await wait(30);
+  assert(shadow.querySelector('.sm-bubble')?.textContent === 'I like the purple', 'partial live captions use the existing buddy bubble');
+  voice({ type: 'caption', role: 'assistant', text: 'I like the purple frosting.' });
+  voice({ type: 'status', state: 'speaking' }); await wait(40);
+  assert(ctl.state.talk.phase === 'speaking' && ctl.state.mood === 'speaking', 'live playback animates the avatar');
+  assert(!spoken, 'live replies do not invoke another speech synthesizer in the page');
+  const startCount = messages.filter((message) => message.type === 'TALK_START').length;
+  voice({ type: 'interrupted' }); await wait(30);
+  assert(ctl.state.talk.phase === 'listening' && !ctl.state.talk.reply, 'speaking over the buddy clears its old reply and restores Listening');
+  voice({ type: 'caption', role: 'assistant', text: 'Tell me more.' }); voice({ type: 'status', state: 'speaking' });
+  voice({ type: 'status', state: 'listening' }); await wait(30);
+  assert(messages.filter((message) => message.type === 'TALK_START').length === startCount, 'follow-up conversation uses the same continuous microphone session');
+  const updated = messages.filter((message): message is Extract<BgRequest, { type: 'TALK_CONTEXT' }> => message.type === 'TALK_CONTEXT').at(-1)!;
+  assert(updated.context.videoId === 'liveTalk01' && updated.context.requestId === session.context.requestId, 'swiping updates context inside the current voice session');
+  button('.sm-talk-toggle').click();
+  voice({ type: 'caption', role: 'assistant', text: 'Late answer' }, session.context.requestId); await wait(50);
+  assert(!ctl.state.talk.active && !ctl.state.talk.reply, 'one microphone tap ends the session and ignores late captions');
+  assert(!messages.some((message) => message.type === 'TELEMETRY' && JSON.stringify(message.event).includes('What do you think of the cake?')), 'conversation text stays out of telemetry');
+  microphoneDenied = true;
+  button('.sm-talk-toggle').click(); await wait(60);
+  assert(!ctl.state.talk.active && ctl.state.talk.error?.includes('microphone'), 'permission errors stop the session and explain recovery');
+  microphoneDenied = false;
+  button('.sm-talk-toggle').click(); await wait(60);
+  assert(ctl.state.talk.phase === 'listening', 'a tap retries after permission is granted');
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await wait(50);
+  assert(!ctl.state.talk.active, 'Escape ends the live session');
+  button('.sm-talk-toggle').click(); await wait(60);
+  voice({ type: 'status', state: 'error', error: 'Live voice connection failed. Tap to reconnect.' }); await wait(30);
+  assert(!ctl.state.talk.active && ctl.state.bubble?.text.includes('connection'), 'a lost connection stops the microphone session with a visible recovery message');
+  ctl.hideBubble(); button('.sm-talk-toggle').click(); await wait(60);
+  await ctl.updateSettings({ enabled: false }); await wait(50);
+  assert(!ctl.state.talk.active && !shadow.querySelector('.sm-talk-toggle'), 'Sleep stops live Talk and removes the microphone');
+  await ctl.updateSettings({ enabled: true, frequency: 'balanced' }); await wait(100);
+  assert(pauses === 0 && resumes === 0, 'live Talk never alters reel playback');
+
+  await tapBuddy(); fits();
+  document.getElementById('test-results')!.textContent = 'PASS: compact ring, live reel reactions, one-tap streaming Talk, partial captions, voice animation, interruption, continuous follow-up, current reel context, permission recovery, connection and sleep cleanup.';
 }
 run().catch((error) => { ctl.destroy(); document.getElementById('test-results')!.textContent = `FAIL: ${error.stack ?? error}`; });

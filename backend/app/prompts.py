@@ -35,6 +35,7 @@ PERSONAS = _Personas()
 # Shared by every comment path, including the Gemini Live observation session.
 # These rules apply to comments the child sees, not factual analysis or JSON structure.
 COMMENT_STYLE = """\n\nHow to write the comment the child will see:
+- Write every reaction in English only, even when the reel or original comment uses another language.
 - Sound like a friend watching beside someone. Usually 2-10 words, at most 15.
   Fragments, contractions and two tiny bursts are fine; a complete sentence is optional.
 - React to one concrete detail. Don't recap the scene or explain why it is funny.

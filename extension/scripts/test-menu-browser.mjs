@@ -22,7 +22,9 @@ try {
   const port = server.address().port;
   for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 'compact', width: 800, height: 600 }, { name: 'phone', width: 390, height: 844, reduced: true }]) {
     const profile = join(temporary, viewport.name);
-    const child = spawn(chrome, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { windowsHide: true, stdio: 'ignore' });
+    const child = spawn(chrome, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+      '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
+      '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { windowsHide: true, stdio: 'ignore' });
     let socket;
     try {
       let debugPort;
@@ -58,6 +60,10 @@ try {
       const screenshot = await send('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(artifacts, `orbit-menu-${viewport.name}.png`), Buffer.from(screenshot.data, 'base64'));
       if (!result.startsWith('PASS:')) throw new Error(`${viewport.name}: ${result || 'browser test timed out'}`);
+      await send('Runtime.evaluate', { expression: "[...document.querySelectorAll('div')].map(node => node.shadowRoot).find(root => root?.querySelector('.sm-talk-launch'))?.querySelector('.sm-talk-launch').click()" });
+      await pause(150);
+      const talkScreenshot = await send('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(artifacts, `talk-avatar-${viewport.name}.png`), Buffer.from(talkScreenshot.data, 'base64'));
       console.log(`${viewport.name} ${viewport.width}×${viewport.height}: ${result}`);
     } finally {
       socket?.close();

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties }
 import { Avatar, avatarAspect } from './Avatar';
 import type { Controller, Position } from './controller';
 import { RingMenu } from './RingMenu';
+import { TalkControls } from './TalkControls';
 import { COMMENT_TRAVEL_MS, commentPosition, companionSize, PANEL } from './comments';
 import { RoamPlanner, roamArea, type Pt } from './roam';
 import type { Rect } from '../shared/types';
@@ -92,12 +93,12 @@ export function App({ ctl }: { ctl: Controller }) {
   // Close the ring on Escape.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') { setOpen(false); if (s.talk.active) ctl.endTalk(); }
       if (e.key === ']' && s.demo) ctl.demoNext();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [s.demo, ctl]);
+  }, [s.demo, s.talk.active, ctl]);
 
   // ---------- roaming (ticks ~4x a second; only reads state, never changes what the AI does) ----------
   const st0 = s.settings;
@@ -148,7 +149,7 @@ export function App({ ctl }: { ctl: Controller }) {
   const visit = s.commentVisit;
   const destination = visit ? commentPosition(visit, vp.w, vp.h) : null;
   const clampX = (x: number) => Math.min(vp.w - size - 4, Math.max(4, x));
-  const clampY = (y: number) => Math.min(vp.h - size - 4, Math.max(4, y));
+  const clampY = (y: number) => Math.min(vp.h - size - 32, Math.max(4, y));
   const homeX = destination?.x ?? clampX(roam?.x ?? pos.fx * vp.w);
   const homeY = destination?.y ?? clampY(roam?.y ?? pos.fy * vp.h);
   const height = Math.round(size * avatarAspect(s.settings.avatar));
@@ -204,6 +205,7 @@ export function App({ ctl }: { ctl: Controller }) {
   };
 
   const st = s.settings;
+  const talkCaption = s.talk.active && ['thinking', 'speaking'].includes(s.talk.phase) ? s.talk.reply : '';
   return (
     <div className="sm-layer">
       {visit && <div className="sm-comment-outline" aria-hidden="true" style={{ left: visit.rect.x - 4, top: visit.rect.y - 4, width: visit.rect.width + 8, height: visit.rect.height + 8 }} />}
@@ -215,14 +217,14 @@ export function App({ ctl }: { ctl: Controller }) {
           ...(roamingWalk && roam ? { transitionDuration: `${roam.ms}ms`, transitionTimingFunction: roam.stroll ? 'linear' : 'cubic-bezier(0.45, 0.05, 0.55, 0.95)' } : {}),
         }}
       >
-        {open && <div className="sm-ring-anchor" style={{ left: -insetX, top: -insetY, width: ringSize, height: ringSize, '--sm-buddy-height': `${height}px` } as CSSProperties}>
+        {open && <div className="sm-ring-anchor" style={{ left: -insetX, top: -insetY, width: ringSize, height: ringSize, '--sm-buddy-height': `${height}px`, '--sm-buddy-width': `${size}px` } as CSSProperties}>
           <RingMenu ctl={ctl} state={s} onClose={() => {
             setOpen(false); companion.current?.querySelector<HTMLButtonElement>('.sm-char-btn')?.focus({ preventScroll: true });
           }} />
         </div>}
-        {!open && s.bubble && (
-          <div key={s.bubble.id} className="sm-bubble" style={{ maxWidth: Math.max(60, Math.min(260, (destination ? destination.side === 'left' : onRight) ? x + size - 12 : vp.w - x - 12)) }} role="status" aria-live="polite" onClick={() => ctl.hideBubble()}>
-            {s.bubble.text}
+        {!open && (talkCaption || s.bubble) && (
+          <div key={talkCaption ? 'talk-reply' : s.bubble!.id} className="sm-bubble" style={{ maxWidth: Math.max(60, Math.min(260, (destination ? destination.side === 'left' : onRight) ? x + size - 12 : vp.w - x - 12)) }} role="status" aria-live="polite" onClick={talkCaption ? undefined : () => ctl.hideBubble()}>
+            {talkCaption || s.bubble!.text}
           </div>
         )}
         <button
@@ -251,11 +253,12 @@ export function App({ ctl }: { ctl: Controller }) {
             <span className="sm-cam-badge" title="Camera on: processed on this computer only">📷</span>
           )}
         </button>
+        {!open && st.enabled && !st.demo && ctl.env === 'youtube' && <TalkControls ctl={ctl} state={s} />}
         {/* No label once it's reacting: a face-only reaction speaks for itself (no lone "Hmm…"). */}
-        {!open && visit && !s.bubble && visit.phase !== 'reacting' && (
+        {!open && !s.talk.active && visit && !s.bubble && visit.phase !== 'reacting' && (
           <span className="sm-reading-label" role="status">{visit.phase === 'running' ? 'Coming over…' : 'Reading…'}</span>
         )}
-        {!open && !visit && st.enabled && s.commentHint && <span className="sm-reading-label" role="status">{s.commentHint}</span>}
+        {!open && !s.talk.active && !visit && st.enabled && s.commentHint && <span className="sm-reading-label" role="status">{s.commentHint}</span>}
 
         {s.demo && ctl.env === 'youtube' && (
           <div className="sm-demo-strip">

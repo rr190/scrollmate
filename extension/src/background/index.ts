@@ -20,6 +20,7 @@ import type {
   TabMessage,
   FeelingLineResponse,
   GazeConfig,
+  TalkContext,
 } from '../shared/messages';
 import { GAZE_MODEL_KEY, type GazeModelData } from '../shared/faceSignals';
 import { badgeFor, HIDDEN_KEY } from '../shared/power';
@@ -91,7 +92,13 @@ async function postJson<T>(path: string, body: unknown, timeoutMs: number, key?:
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
-    if (!res.ok) throw new Error(`${path} -> HTTP ${res.status}`);
+    if (!res.ok) {
+      if (path === '/scrollmate/talk') {
+        const detail = await res.json().catch(() => null);
+        throw new Error(typeof detail?.detail === 'string' ? detail.detail : `Talk unavailable (HTTP ${res.status}).`);
+      }
+      throw new Error(`${path} -> HTTP ${res.status}`);
+    }
     return (await res.json()) as T;
   } finally {
     clearTimeout(timer);
@@ -271,6 +278,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
             remember(rec);
             pendingRecords.delete(msg.videoId);
           } else pendingRecords.set(msg.videoId, rec);
+          if (talkTurn?.context.videoId === msg.videoId) void sendTalkContext(talkTurn).catch(() => undefined);
         }
         const { record: _r, ...rest } = res;
         return rest;
@@ -432,6 +440,9 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
 let camTabId: number | null = null;
 let camWanted = false;
 let gazeWanted = false; // eye tracking on (the content script re-sends this on every camera start)
+let micWanted = false;
+let creatingMedia: Promise<void> | null = null;
+let talkTurn: { tabId: number; context: TalkContext } | null = null;
 
 async function gazeConfig(): Promise<GazeConfig> {
   const got = await chrome.storage.local.get(GAZE_MODEL_KEY).catch(() => ({}) as Record<string, unknown>);
@@ -452,12 +463,15 @@ async function hasOffscreen(): Promise<boolean> {
 }
 
 async function ensureCameraPage() {
+  if (creatingMedia) return creatingMedia;
   if (await hasOffscreen()) return;
-  await chrome.offscreen.createDocument({
+  if (creatingMedia) return creatingMedia;
+  creatingMedia = chrome.offscreen.createDocument({
     url: 'camera-offscreen.html',
     reasons: [chrome.offscreen.Reason.USER_MEDIA],
-    justification: 'Opt-in, on-device face expression signals so ScrollMate can react to the viewer.',
+    justification: 'Camera expressions and microphone conversations explicitly started on the buddy.',
   });
+  try { await creatingMedia; } finally { creatingMedia = null; }
 }
 
 async function closeCameraPage() {
@@ -468,13 +482,86 @@ function toCamTab(msg: TabMessage) {
   if (camTabId !== null) chrome.tabs.sendMessage(camTabId, msg).catch(() => undefined);
 }
 
+const sendMedia = (type: string, requestId?: string) => chrome.runtime.sendMessage({ target: 'offscreen', type, requestId });
+async function releaseMedia() { if (!camWanted && !micWanted) await closeCameraPage(); }
+
+async function cancelTalk(turn = talkTurn) {
+  if (!turn || talkTurn !== turn) return;
+  talkTurn = null;
+  micWanted = false;
+  await sendMedia('TALK_CANCEL', turn.context.requestId).catch(() => undefined);
+  await releaseMedia();
+}
+
+async function sendTalkContext(turn: NonNullable<typeof talkTurn>, start = false) {
+  const record = pendingRecords.get(turn.context.videoId) ?? memory.find((item) => item.videoId === turn.context.videoId);
+  const url = new URL('/scrollmate/talk/live', BACKEND);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  await chrome.runtime.sendMessage({ target: 'offscreen', type: start ? 'TALK_START' : 'TALK_CONTEXT', url: url.href,
+    context: { ...turn.context, videoSummary: record?.summary.slice(0, 600) ?? '' } });
+}
+
+async function handleTalk(msg: BgRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
+  if (msg.type === 'TALK_START') {
+    if (sender.tab?.id === undefined) return { ok: false, error: 'Open Talk on a YouTube Shorts tab.' };
+    const previous = talkTurn;
+    if (previous) {
+      await cancelTalk(previous);
+      void chrome.tabs.sendMessage(previous.tabId, { type: 'TALK_EVENT', requestId: previous.context.requestId,
+        event: { type: 'status', state: 'error', error: 'A new voice session was started.' } }).catch(() => undefined);
+    }
+    const turn = talkTurn = { tabId: sender.tab.id, context: msg.context };
+    micWanted = true;
+    try {
+      await ensureCameraPage();
+      let mediaReady = false;
+      for (let attempt = 0; attempt < 40 && talkTurn === turn; attempt++) {
+        mediaReady = !!(await sendMedia('MEDIA_PING').catch(() => null))?.ready;
+        if (mediaReady) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (talkTurn !== turn) { await releaseMedia(); return { ok: false, error: 'Voice session cancelled.' }; }
+      if (!mediaReady) throw new Error('Microphone page did not start. Reload the extension and this tab.');
+      await sendTalkContext(turn, true);
+      return { ok: true };
+    } catch (error) {
+      await cancelTalk(turn);
+      return { ok: false, error: error instanceof Error ? error.message : 'Microphone unavailable.' };
+    }
+  }
+  if (msg.type === 'TALK_CONTEXT') {
+    if (talkTurn && sender.tab?.id === talkTurn.tabId && msg.context.requestId === talkTurn.context.requestId) {
+      talkTurn.context = msg.context;
+      await sendTalkContext(talkTurn);
+    }
+    return { ok: true };
+  }
+  if (msg.type === 'TALK_CANCEL') {
+    if (talkTurn && sender.tab?.id === talkTurn.tabId && (!msg.requestId || msg.requestId === talkTurn.context.requestId)) await cancelTalk();
+    return { ok: true };
+  }
+  if (msg.type === 'TALK_MIC_PERMISSION_GRANTED') return { ok: true };
+  const turn = talkTurn;
+  // Only our media document can relay speech events; tab scripts cannot impersonate it.
+  if (msg.type !== 'TALK_LIVE_EVENT' || sender.tab || sender.url !== chrome.runtime.getURL('camera-offscreen.html') ||
+      !turn || msg.requestId !== turn.context.requestId) return { ok: true };
+  await chrome.tabs.sendMessage(turn.tabId, { type: 'TALK_EVENT', requestId: msg.requestId, event: msg.event }).catch(() => undefined);
+  if (msg.event.type === 'status' && ['error', 'needs_permission'].includes(msg.event.state)) {
+    await cancelTalk(turn);
+    if (msg.event.state === 'needs_permission') await chrome.tabs.create({ url: chrome.runtime.getURL('camera-setup.html?microphone=1') });
+  }
+  return { ok: true };
+}
+
 async function handleCamera(msg: BgRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
   switch (msg.type) {
+    case 'MEDIA_READY':
+      return { camera: camWanted };
     case 'CAMERA_START':
       camTabId = sender.tab?.id ?? camTabId;
       camWanted = true;
       gazeWanted = !!msg.gaze;
-      if (await hasOffscreen()) await pushGazeConfig();
+      if (await hasOffscreen()) { await pushGazeConfig(); await sendMedia('CAMERA_START').catch(() => undefined); }
       else await ensureCameraPage(); // it asks for the gaze config when it starts
       return { ok: true };
     case 'GAZE_ENABLE':
@@ -497,7 +584,7 @@ async function handleCamera(msg: BgRequest, sender: chrome.runtime.MessageSender
     case 'CAMERA_STOP':
       camWanted = false;
       chrome.runtime.sendMessage({ target: 'offscreen', type: 'CAMERA_STOP' }).catch(() => undefined);
-      await closeCameraPage();
+      await releaseMedia();
       toCamTab({ type: 'CAMERA_STATUS', state: 'off' });
       return { ok: true };
     case 'USER_SIGNAL':
@@ -505,15 +592,15 @@ async function handleCamera(msg: BgRequest, sender: chrome.runtime.MessageSender
       return { ok: true };
     case 'CAMERA_STATUS':
       if (msg.state === 'needs_permission') {
-        await closeCameraPage();
+        if (!micWanted) await closeCameraPage();
         await chrome.tabs.create({ url: chrome.runtime.getURL('camera-setup.html') });
       }
       toCamTab(msg);
       return { ok: true };
     case 'CAMERA_PERMISSION_GRANTED':
       if (camWanted) {
-        await closeCameraPage();
         await ensureCameraPage();
+        await sendMedia('CAMERA_START').catch(() => undefined);
       }
       return { ok: true };
   }
@@ -521,12 +608,22 @@ async function handleCamera(msg: BgRequest, sender: chrome.runtime.MessageSender
 }
 
 const CAMERA_TYPES = new Set([
+  'MEDIA_READY',
   'CAMERA_START', 'CAMERA_STOP', 'USER_SIGNAL', 'CAMERA_STATUS', 'CAMERA_PERMISSION_GRANTED',
   'GAZE_ENABLE', 'GAZE_GET_CONFIG', 'GAZE', 'GAZE_MODEL_SAVED', 'OPEN_GAZE_CALIBRATION',
 ]);
 
+chrome.tabs.onRemoved.addListener((tabId) => { if (talkTurn?.tabId === tabId) void cancelTalk(); });
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.status === 'loading' && talkTurn?.tabId === tabId) void cancelTalk();
+});
+
 chrome.runtime.onMessage.addListener((msg: BgRequest & { target?: string }, sender, sendResponse) => {
   if (msg?.target === 'offscreen') return false; // addressed to the camera page, not us
+  if (msg?.type?.startsWith('TALK_')) {
+    handleTalk(msg, sender).then(sendResponse).catch(() => sendResponse({ ok: false, error: 'Talk unavailable. Please try again.' }));
+    return true;
+  }
   if (CAMERA_TYPES.has(msg?.type)) {
     handleCamera(msg, sender)
       .then(sendResponse)
@@ -561,6 +658,7 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (hidden) {
     // completely off: stop anything still running here too
     abortAll();
+    await cancelTalk();
     camWanted = false;
     await closeCameraPage();
   } else {

@@ -4,7 +4,7 @@ import { App } from '../src/content/App';
 import { COMMENT_DWELL_MS } from '../src/content/comments';
 import { Controller } from '../src/content/controller';
 import { DEFAULT_SETTINGS } from '../src/shared/types';
-import type { BgRequest, CommentReactResponse } from '../src/shared/messages';
+import type { BgRequest, CommentReactResponse, TabMessage, TalkContext } from '../src/shared/messages';
 // esbuild's text loader is used by the browser-test runner.
 // @ts-expect-error CSS is loaded as a string in this test bundle.
 import styles from '../src/content/styles.css';
@@ -16,6 +16,7 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const sent: BgRequest[] = [];
 const writes: Record<string, unknown>[] = [];
+const listeners: ((message: TabMessage) => void)[] = [];
 const pending = new Map<string, { msg: Extract<BgRequest, { type: 'COMMENT_REACT' }>; callback: (res: unknown) => void }>();
 const position = { fx: 0.45, fy: 0.2 };
 
@@ -25,7 +26,7 @@ Object.defineProperty(window, 'chrome', { value: {
     set: async (value: Record<string, unknown>) => { writes.push(value); },
   } },
   runtime: {
-    lastError: null, onMessage: { addListener() {} },
+    lastError: null, onMessage: { addListener(listener: (message: TabMessage) => void) { listeners.push(listener); } },
     sendMessage: (msg: BgRequest, callback: (res: unknown) => void) => {
       sent.push(msg);
       if (msg.type === 'COMMENT_REACT') { pending.set(msg.requestId, { msg, callback }); return; }
@@ -100,6 +101,47 @@ async function run() {
   assert(commentRequests().length === 0, 'passing over comments must not call the model');
   hover(document.querySelector<HTMLElement>('[data-fixture=reply]')!); await wait(1100);
   assert(commentRequests().length === 0, 'replies are outside this first-version scope');
+
+  ctl.openTalk();
+  assert(ctl.state.talk.active, 'Talk can remain open during comment browsing');
+  const discussion = () => (sent.filter((m) => m.type === 'TALK_START' || m.type === 'TALK_CONTEXT').at(-1) as { context: TalkContext }).context;
+  const sessionId = discussion().requestId;
+  const voice = (event: Extract<TabMessage, { type: 'TALK_EVENT' }>['event']) => listeners.forEach((listener) => listener({ type: 'TALK_EVENT', requestId: sessionId, event }));
+  voice({ type: 'status', state: 'listening' });
+  assert(discussion().commentsOpen && discussion().visibleComments?.length === 2, 'Talk can discuss the visible comments before any automatic visit');
+  assert(!discussion().visibleComments?.some((text) => text.includes('should not trigger')), 'reply threads are not included as top-level comments');
+  await select(first); reply(latest().requestId); await wait(800);
+  assert(ctl.state.commentVisit?.phase === 'reacting', 'comment visits and reactions stay live during Talk');
+  assert(discussion().selectedComment === first.textContent, 'deliberate hover supplies the exact comment to the conversation');
+  voice({ type: 'caption', role: 'assistant', text: 'I think the dog is very determined.' });
+  voice({ type: 'status', state: 'speaking' }); await wait(30);
+  assert(shadow.querySelector('.sm-bubble')?.textContent === 'I think the dog is very determined.', 'voice captions remain visible while the buddy speaks');
+  voice({ type: 'status', state: 'listening' }); await wait(30);
+  assert(shadow.querySelector('.sm-bubble')?.textContent === 'the door disagrees.', 'finished voice captions do not hide automatic comment reactions');
+  const beforeDiscussion = commentRequests().length;
+  hover(second); await wait(400);
+  assert(discussion().selectedComment === second.textContent, 'another comment is available to Talk even while a reaction bubble blocks a new visit');
+  assert(commentRequests().length === beforeDiscussion, 'selecting discussion context does not force another reaction request');
+  hover(first); await wait(400);
+  assert(discussion().selectedComment === first.textContent, 'a previously visited comment can be selected again for discussion');
+  ctl.hideBubble(); await wait(1100);
+  assert(!ctl.state.commentVisit, 'the temporary reaction visit has ended');
+  ctl.endTalk(); ctl.openTalk(); await wait(30);
+  assert(discussion().selectedComment === first.textContent, 'starting Talk after the visit ends preserves the last selected comment');
+  panel.style.width = '100vw';
+  await wait(250); // Let the old visit invalidate after the layout changes.
+  hover(second); await wait(400);
+  assert(discussion().selectedComment === second.textContent && !ctl.state.commentVisit, 'discussion selection works even when there is no room for the buddy to move');
+  panel.style.width = '';
+  panel.hidden = true; await wait(800);
+  assert(discussion().commentsOpen === false && discussion().visibleComments?.length === 0, 'closing comments removes the visible sample from Talk');
+  panel.hidden = false; await wait(800);
+  assert(discussion().commentsOpen && discussion().visibleComments?.length === 2, 'reopening comments updates the same conversation');
+  const originalSecond = second.textContent!;
+  second.textContent = 'A new comment loaded while we were talking.'; await wait(800);
+  assert(discussion().visibleComments?.includes(second.textContent), 'newly loaded comment text reaches the active conversation');
+  second.textContent = originalSecond;
+  ctl.endTalk(); await reset();
 
   // Real comment hosts can be boxless while their nested text spans are painted normally.
   first.innerHTML = '<span>The dog thinks that stick fits through the door.</span>';

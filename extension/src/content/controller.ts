@@ -17,6 +17,7 @@ import {
   type FeelingLineResponse,
   type SwipeResponse,
   type TelemetryEvent,
+  type TalkContext,
 } from '../shared/messages';
 import { predictMoment } from '../shared/moments';
 import { FeelingNoticer } from '../shared/feelings';
@@ -40,6 +41,8 @@ export interface Position {
 }
 
 export interface UiState {
+  talk: { active: boolean; phase: 'ready' | 'starting' | 'listening' | 'thinking' | 'speaking' | 'error';
+    transcript: string; reply: string; error: string | null; emotion: Mood };
   mood: Mood;
   bubble: { id: string; text: string; commentRequestId?: string } | null;
   settings: Settings;
@@ -100,6 +103,7 @@ const newId = () => `r${Date.now().toString(36)}${(idSeq++).toString(36)}`;
 
 export class Controller {
   state: UiState = {
+    talk: { active: false, phase: 'ready', transcript: '', reply: '', error: null, emotion: 'curious' },
     mood: 'sleeping',
     bubble: null,
     settings: { ...DEFAULT_SETTINGS },
@@ -141,6 +145,11 @@ export class Controller {
   gazePoint: { x: number; y: number } | null = null;
   private lastGazeAt = 0;
   private lastEyeContact = 0;
+  private talkTurnId: string | null = null;
+  private talkTimer: number | undefined;
+  private discussedComment: { videoId: string; text: string } | null = null;
+  private talkContextKey = '';
+  private nextTalkContextAt = 0;
 
   constructor(public env: Env, private host: HTMLElement) {}
 
@@ -178,6 +187,12 @@ export class Controller {
       this.comments = new CommentsWatcher({
         enabled: () => this.commentsEnabled(),
         onSelect: (target) => this.visitComment(target),
+        onFocus: (target) => {
+          const videoId = this.watcher?.currentId;
+          if (!videoId) return;
+          this.discussedComment = { videoId, text: target.text };
+          this.syncTalkContext();
+        },
         onCancel: () => this.cancelCommentVisit(),
         onHint: (message) => this.setCommentHint(message),
       });
@@ -194,6 +209,7 @@ export class Controller {
       else if (m?.type === 'GAZE') this.onGaze(m.x, m.y);
       else if (m?.type === 'GAZE_CALIBRATED') void this.loadGazeModelInfo().then(() => this.set({ note: 'Eye tracking calibrated ✓' }));
       else if (m?.type === 'CAMERA_STATUS') this.onCameraStatus(m.state, m.detail);
+      else if (m?.type === 'TALK_EVENT') this.onTalkEvent(m);
       return false;
     });
     if (this.state.settings.enabled && this.state.settings.userCam) this.startCamera();
@@ -206,6 +222,7 @@ export class Controller {
 
   destroy() {
     this.destroyed = true;
+    this.endTalk();
     this.epoch++; // late async results are ignored
     sendBg({ type: 'CANCEL_ALL' }).catch(() => undefined);
     this.stopDemo();
@@ -218,6 +235,81 @@ export class Controller {
   }
 
   // ---------- settings ----------
+  openTalk() {
+    if (this.destroyed || !this.state.settings.enabled || this.env !== 'youtube' || this.state.settings.demo || this.state.talk.active) return;
+    const requestId = this.talkTurnId = newId();
+    this.set({ talk: { ...this.state.talk, active: true, phase: 'starting', transcript: '', reply: '', error: null, emotion: 'curious' } });
+    this.speaker.cancel();
+    this.armTalkTimeout(30_000);
+    const context = this.talkContext(requestId);
+    this.talkContextKey = JSON.stringify(context);
+    this.nextTalkContextAt = Date.now() + 600;
+    void sendBg<{ ok: boolean; error?: string }>({ type: 'TALK_START', context }).then((result) => {
+      if (this.talkTurnId !== requestId) { void sendBg({ type: 'TALK_CANCEL', requestId }).catch(() => undefined); return; }
+      if (!result?.ok) this.stopTalk(result?.error ?? 'Microphone unavailable. Tap to retry.');
+    }).catch(() => { if (this.talkTurnId === requestId) this.stopTalk('Connection lost. Reload the extension and this tab.'); });
+    this.tick();
+  }
+
+  toggleTalk() { if (this.state.talk.active) this.endTalk(); else this.openTalk(); }
+  endTalk() { this.stopTalk(); }
+
+  private stopTalk(error?: string) {
+    const requestId = this.talkTurnId;
+    this.talkTurnId = null;
+    this.talkContextKey = '';
+    window.clearTimeout(this.talkTimer);
+    if (requestId) void sendBg({ type: 'TALK_CANCEL', requestId }).catch(() => undefined);
+    this.set({ talk: { active: false, phase: error ? 'error' : 'ready', transcript: '', reply: '', error: error ?? null, emotion: 'curious' } });
+    if (error) {
+      window.clearTimeout(this.bubbleTimer);
+      this.set({ bubble: { id: newId(), text: error } });
+      this.bubbleTimer = window.setTimeout(() => this.hideBubble(), 8000);
+    }
+    this.tick();
+  }
+
+  private talkContext(requestId: string): TalkContext {
+    const videoId = this.watcher?.currentId ?? '';
+    const discussion = this.comments?.discussionContext() ?? { commentsOpen: false, visibleComments: [] };
+    return { requestId, videoId, title: this.ctx?.title || readPageText().title,
+      selectedComment: this.discussedComment?.videoId === videoId ? this.discussedComment.text : this.state.commentVisit?.text ?? '',
+      ...discussion, personality: this.state.settings.personality };
+  }
+
+  private syncTalkContext() {
+    this.nextTalkContextAt = Date.now() + 600;
+    if (!this.talkTurnId) return;
+    const context = this.talkContext(this.talkTurnId);
+    const key = JSON.stringify(context);
+    if (key === this.talkContextKey) return;
+    this.talkContextKey = key;
+    void sendBg({ type: 'TALK_CONTEXT', context }).catch(() => {
+      if (this.talkContextKey === key) this.talkContextKey = '';
+    });
+  }
+
+  private talkBusy() { return this.state.talk.active; }
+
+  private armTalkTimeout(ms: number) {
+    window.clearTimeout(this.talkTimer);
+    this.talkTimer = window.setTimeout(() => this.stopTalk('Voice connection stopped. Tap the microphone to reconnect.'), ms);
+  }
+
+  private onTalkEvent(message: Extract<TabMessage, { type: 'TALK_EVENT' }>) {
+    if (!this.state.talk.active || message.requestId !== this.talkTurnId || !this.state.settings.enabled) return;
+    const event = message.event;
+    if (event.type === 'status') {
+      if (event.state === 'error' || event.state === 'needs_permission') { this.stopTalk(event.error ?? 'Live voice unavailable. Tap the microphone to retry.'); return; }
+      this.set({ talk: { ...this.state.talk, phase: event.state } });
+    } else if (event.type === 'caption') {
+      this.set({ talk: { ...this.state.talk, [event.role === 'user' ? 'transcript' : 'reply']: event.text } });
+    } else if (event.type === 'interrupted') {
+      this.set({ talk: { ...this.state.talk, phase: 'listening', reply: '', transcript: '' } });
+    }
+    this.armTalkTimeout(45_000); this.tick();
+  }
+
   async updateSettings(patch: Partial<Settings>) {
     const prev = this.state.settings;
     const next = applySettings(prev, patch);
@@ -297,6 +389,7 @@ export class Controller {
     this.commentAttempt = { requestId, videoId, readyAt: now + travel, expiresAt: now + 12_000, handled: false };
     this.seenComments.add(target.text);
     this.set({ commentVisit: { ...target, requestId, phase: 'running', emotion: null } });
+    this.syncTalkContext();
     this.emit({ type: 'status', videoId, note: 'reading a selected comment' });
     void this.requestComment(target, requestId, videoId);
     this.tick();
@@ -577,6 +670,8 @@ export class Controller {
   }
 
   private disable() {
+    this.endTalk();
+    this.discussedComment = null;
     this.epoch++;
     this.cancelCommentVisit();
     this.comments?.reset();
@@ -593,6 +688,8 @@ export class Controller {
   }
 
   async clearMemory() {
+    this.endTalk();
+    this.discussedComment = null;
     this.epoch++;
     this.cancelCommentVisit();
     this.comments?.reset();
@@ -701,12 +798,15 @@ export class Controller {
       commentRequestId: this.commentAttempt?.requestId ?? null,
       commentReady: this.state.commentVisit?.phase !== 'running',
       readingComments: !!this.commentAttempt || !!this.state.commentHint,
+      conversationBusy: this.talkBusy(),
       ...this.userFlags(),
     };
   }
 
   private tick() {
+    if (this.destroyed) return;
     const now = Date.now();
+    if (this.talkTurnId && now >= this.nextTalkContextAt) this.syncTalkContext();
     // Never steer the buddy using a point left behind by a stopped camera or lost face.
     if ((this.gazePoint || this.state.gaze.zone || this.state.gaze.look) && !this.gazeActive()) this.clearGaze();
     this.tickComment(now);
@@ -732,6 +832,7 @@ export class Controller {
 
   private computeMood(s: PlaybackSnapshot, now: number): Mood {
     if (!this.state.settings.enabled) return 'sleeping';
+    if (this.state.talk.active && this.state.talk.phase === 'speaking') return 'speaking';
     if (this.state.commentVisit) {
       if (this.state.commentVisit.phase === 'running') return 'curious';
       return this.state.commentVisit.emotion ?? (this.state.commentVisit.phase === 'reading' ? 'thinking' : 'curious');
@@ -740,7 +841,7 @@ export class Controller {
     if (this.state.bubble) return 'amused';
     const emo = this.cues.current(now); // a timed reaction to the moment on screen
     if (emo) return emo;
-    if (this.busy > 0 || this.engine.hasPending()) return 'thinking';
+    if (this.busy > 0 || this.engine.hasPending() || (this.state.talk.active && this.state.talk.phase === 'thinking')) return 'thinking';
     if (now - this.lastActivity > SLEEP_AFTER_MS) return 'sleeping';
     if (s.playing) return 'watching';
     return 'idle';
@@ -759,7 +860,7 @@ export class Controller {
     const linger = Math.min(8000, Math.max(4000, d.candidate.text.length * 75));
     if (d.candidate.commentRequestId === this.commentAttempt?.requestId && this.commentAttempt)
       this.commentAttempt.expiresAt = Date.now() + linger + 1000;
-    if (d.mode === 'voice' && this.state.settings.voice && this.speaker.available) {
+    if (d.mode === 'voice' && this.state.settings.voice && this.speaker.available && !this.talkBusy()) {
       this.speaker.speak(
         d.candidate.text,
         () => {
@@ -824,6 +925,7 @@ export class Controller {
   }
 
   private onShortChange(info: ShortInfo, prev: LeftInfo | null) {
+    this.discussedComment = null;
     this.lastActivity = Date.now();
     if (this.demo) return;
     this.cancelCommentVisit();
@@ -834,6 +936,7 @@ export class Controller {
     if (prev) this.handleLeft(prev);
     const prevTitle = this.ctx?.title ?? '';
     const ctx = (this.ctx = this.newCtx(info.videoId));
+    this.syncTalkContext();
     if (!this.state.settings.enabled) return;
     sendBg({ type: 'SHORT_STARTED', videoId: info.videoId }).catch(() => undefined);
     // YouTube updates the active reel's title a moment after the URL changes; skip a stale title.
@@ -845,6 +948,7 @@ export class Controller {
         return;
       }
       ctx.title = title;
+      this.syncTalkContext();
       this.emit({ type: 'short_started', videoId: info.videoId, title, channel });
       void this.swipeStep(ctx, title, channel);
     };
@@ -895,6 +999,8 @@ export class Controller {
   }
 
   private onLeaveShorts(prev: LeftInfo | null) {
+    this.endTalk();
+    this.discussedComment = null;
     this.cancelCommentVisit();
     this.comments?.reset();
     if (prev) this.handleLeft(prev);

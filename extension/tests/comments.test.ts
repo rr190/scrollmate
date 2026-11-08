@@ -43,6 +43,14 @@ test('a video reaction still waits out the reading gap after a comment bubble', 
   assert.equal(e.tick(free, 6500)?.candidate.id, 'video');
 });
 
+test('Talk keeps reel reactions live as bubbles while reserving spoken audio', () => {
+  const video: Candidate = { ...comment, targetCommentId: undefined, commentRequestId: undefined };
+  const e = engine();
+  const state = { ...snapshot, commentRequestId: null, currentTime: 5, paused: true, playing: false, conversationBusy: true };
+  assert.equal(e.propose(video, state, 1000)?.mode, 'bubble');
+  assert.equal(engine().propose(video, { ...state, conversationBusy: false }, 1000)?.mode, 'voice');
+});
+
 test('a low-importance comment line is still shown (the user picked this comment); a low video line is not', () => {
   assert.equal(engine().propose({ ...comment, importance: 0.1 }, snapshot, 1000)?.candidate.id, comment.id);
   const video: Candidate = { ...comment, importance: 0.1, targetCommentId: undefined, commentRequestId: undefined };

@@ -9,6 +9,8 @@
     "test:comments": "tsx --test tests/comments.test.ts",
     "test:comments:browser": "node scripts/test-comments-browser.mjs",
     "test:menu": "tsx --test tests/settings.test.ts",
+    "test:talk": "tsx --test tests/talk.test.ts tests/talk-background.test.ts tests/voiceWorklets.test.ts tests/speech.test.ts",
+    "test:talk:media": "node scripts/test-face-pipeline.mjs --talk",
     "test:menu:browser": "node scripts/test-menu-browser.mjs",
     "eval": "tsx ../eval/timing_eval.ts",
     "setup:mediapipe": "node scripts/setup-mediapipe.mjs",

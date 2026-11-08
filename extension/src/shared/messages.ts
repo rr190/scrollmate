@@ -4,6 +4,12 @@ import type { Analysis, Frequency, MemoryRecord, Personality, ReactionProposal, 
 
 /** Messages from content script / stage page to the background worker. */
 export type BgRequest =
+  | { type: 'TALK_START'; context: TalkContext }
+  | { type: 'TALK_CONTEXT'; context: TalkContext }
+  | { type: 'TALK_CANCEL'; requestId?: string }
+  | { type: 'TALK_LIVE_EVENT'; requestId: string; event: LiveVoiceEvent }
+  | { type: 'TALK_MIC_PERMISSION_GRANTED' }
+  | { type: 'MEDIA_READY' }
   | { type: 'CAPTURE_FRAME'; rect: Rect; viewport: { w: number; h: number } }
   | { type: 'SHORT_STARTED'; videoId: string }
   | { type: 'SHORT_SKIPPED'; videoId: string; title: string; secondsWatched: number }
@@ -145,7 +151,22 @@ export interface ReactResponse {
 
 /** Messages from the background worker to the content script. */
 export type CameraState = 'off' | 'starting' | 'on' | 'needs_permission' | 'error';
+export interface TalkContext {
+  requestId: string;
+  videoId: string;
+  title: string;
+  selectedComment: string;
+  commentsOpen?: boolean;
+  visibleComments?: string[];
+  personality: Personality;
+  videoSummary?: string;
+}
+export type LiveVoiceEvent =
+  | { type: 'status'; state: 'listening' | 'thinking' | 'speaking' | 'error' | 'needs_permission'; error?: string }
+  | { type: 'caption'; role: 'user' | 'assistant'; text: string }
+  | { type: 'interrupted' };
 export type TabMessage =
+  | { type: 'TALK_EVENT'; requestId: string; event: LiveVoiceEvent }
   | { type: 'ACTIVE_TAB_GRANTED' }
   | { type: 'USER_SIGNAL'; signal: UserSignal }
   | { type: 'CAMERA_STATUS'; state: CameraState; detail?: string }
