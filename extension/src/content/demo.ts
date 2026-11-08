@@ -43,9 +43,9 @@ export const DEMO_SHORTS: DemoShort[] = [
       skipped: false,
     },
     canned: {
-      witty: [{ ...base, text: 'That cake trusted the process, and the process delivered.', importance: 0.35, expiresAfterSeconds: 15, isCallback: false }],
-      hype: [{ ...base, text: 'Strawberries on top? Chef is cooking!', importance: 0.35, expiresAfterSeconds: 15, isCallback: false }],
-      chill: [{ ...base, text: 'Nice, steady bake.', importance: 0.25, expiresAfterSeconds: 15, isCallback: false }],
+      witty: [{ ...base, text: 'Hehe, that cake came out so fluffy, look!', importance: 0.35, expiresAfterSeconds: 15, isCallback: false }],
+      hype: [{ ...base, text: "Strawberries on top! You'd want a slice, right?", importance: 0.35, expiresAfterSeconds: 15, isCallback: false }],
+      chill: [{ ...base, text: 'Ooh, a cosy little cake.', importance: 0.25, expiresAfterSeconds: 15, isCallback: false }],
     },
   },
   {
@@ -73,9 +73,9 @@ export const DEMO_SHORTS: DemoShort[] = [
       skipped: false,
     },
     canned: {
-      witty: [{ ...base, text: 'Five minutes, as promised. Just not the five minutes anyone wanted.', importance: 0.5, expiresAfterSeconds: 15, isCallback: false }],
-      hype: [{ ...base, text: 'OKAY that smoke had main character energy!', importance: 0.5, expiresAfterSeconds: 15, isCallback: false }],
-      chill: [{ ...base, text: 'Smoke alarm got its moment.', importance: 0.45, expiresAfterSeconds: 15, isCallback: false }],
+      witty: [{ ...base, text: 'Uh oh, too much oven time! Silly cake. 😄', importance: 0.5, expiresAfterSeconds: 15, isCallback: false }],
+      hype: [{ ...base, text: 'Whoa, so much smoke! Open a window, quick!', importance: 0.5, expiresAfterSeconds: 15, isCallback: false }],
+      chill: [{ ...base, text: "Oops, a smoky one. That's okay.", importance: 0.45, expiresAfterSeconds: 15, isCallback: false }],
     },
   },
   {
@@ -104,14 +104,14 @@ export const DEMO_SHORTS: DemoShort[] = [
     },
     canned: {
       witty: [
-        { ...base, text: "We've just witnessed the rise, fall and redemption of the entire baking industry.", importance: 0.95, expiresAfterSeconds: 40, isCallback: true },
-        { ...base, text: 'That glaze is shinier than my future.', importance: 0.6, expiresAfterSeconds: 15, isCallback: false },
+        { ...base, text: 'We saw a good cake, a burnt cake, and now a super shiny one!', importance: 0.95, expiresAfterSeconds: 40, isCallback: true },
+        { ...base, text: 'That glaze is so shiny, like a mirror! ✨', importance: 0.6, expiresAfterSeconds: 15, isCallback: false },
       ],
       hype: [
-        { ...base, text: 'Cake, catastrophe, MASTERPIECE: the comeback arc is complete!', importance: 0.95, expiresAfterSeconds: 40, isCallback: true },
+        { ...base, text: 'From burnt to beautiful! They never gave up, yay!', importance: 0.95, expiresAfterSeconds: 40, isCallback: true },
       ],
       chill: [
-        { ...base, text: 'Rise, fall, redemption. Cake is going to be okay.', importance: 0.9, expiresAfterSeconds: 40, isCallback: true },
+        { ...base, text: 'See? The cake is okay now. Phew.', importance: 0.9, expiresAfterSeconds: 40, isCallback: true },
       ],
     },
   },

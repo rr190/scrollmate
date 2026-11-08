@@ -28,6 +28,27 @@
   button { border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 700; cursor: pointer; }
   button.ghost { background: var(--panel); color: var(--ink); border-color: var(--line); }
   button.small { padding: 4px 10px; font-size: 12.5px; }
+    /* Eye Control demo: big, calm, high-contrast edge buttons with a dwell ring */
+  .ec-btn { position: fixed; z-index: 40; display: none; flex-direction: column; align-items: center; gap: 6px; width: 150px;
+    padding: 14px 10px 12px; border-radius: 28px; border: 3px solid rgba(255,255,255,.55); background: rgba(30,22,48,.72); color: #fff;
+    font: 700 20px/1.2 system-ui, sans-serif; box-shadow: 0 8px 28px rgba(0,0,0,.35); transition: transform .2s, background .2s, border-color .2s; }
+  body.ec-on .ec-btn { display: flex; }
+  .ec-right { right: 16px; top: 50%; translate: 0 -50%; }
+  .ec-left { left: 16px; top: 50%; translate: 0 -50%; }
+  .ec-top { left: 50%; top: 16px; translate: -50% 0; width: 190px; }
+  .ec-btn.glow { background: rgba(124,92,224,.92); border-color: #ffd23f; transform: scale(1.08); }
+  .ec-btn.chosen { background: rgba(31,157,85,.95); border-color: #fff; }
+  .ec-btn svg { width: 78px; height: 78px; }
+  .ec-track { fill: rgba(255,255,255,.12); stroke: rgba(255,255,255,.35); stroke-width: 6; }
+  .ec-fill { fill: none; stroke: #ffd23f; stroke-width: 7; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 36px 36px; transition: stroke-dashoffset .12s linear; }
+  .ec-emoji { font-size: 26px; fill: #fff; }
+  .ec-short { position: relative; height: 220px; border-radius: 14px; display: grid; place-items: center; text-align: center; color: #fff;
+    font: 700 22px/1.3 system-ui, sans-serif; transition: background .4s; overflow: hidden; }
+  .ec-short small { display: block; font-size: 13px; font-weight: 500; opacity: .85; }
+  .ec-short .paused { position: absolute; inset: 0; display: none; place-items: center; background: rgba(0,0,0,.45); font-size: 48px; }
+  .ec-short.is-paused .paused { display: grid; }
+  .ec-bubble { min-height: 44px; margin-top: 10px; padding: 10px 14px; border-radius: 14px; background: var(--accent-soft); font-weight: 600; }
+  @media (prefers-reduced-motion: reduce) { .ec-btn, .ec-short { transition: none; } .ec-btn.glow { transform: none; } }
   button:disabled { opacity: .55; cursor: not-allowed; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
   .cam { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 10px; overflow: hidden; margin-top: 12px; }
@@ -174,7 +195,35 @@
       </dl>
     </div>
   </section>
+  <section class="wide">
+    <h2>🎯 Eye Control <span class="k" style="font-weight:400">hands-free demo, for kids who can't easily use a mouse or touch screen</span></h2>
+    <div class="gaze-wrap">
+      <div>
+        <div class="ec-short" id="ecShort"><div><span id="ecShortTitle">Short 1 of 5</span><small id="ecShortSub"></small></div><div class="paused">⏸</div></div>
+        <div class="ec-bubble" id="ecBubble">🍡 Mochi: Look at a big button until its ring fills.</div>
+        <div class="row">
+          <button id="ecStart" disabled>Start Eye Control</button>
+          <label class="k" style="display:flex;align-items:center;gap:6px">Look time
+            <select id="ecDwell" style="padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit">
+              <option value="1000">Fast 1 s</option><option value="1500" selected>Normal 1.5 s</option><option value="2500">Slow 2.5 s</option>
+            </select></label>
+        </div>
+        <div class="k" style="margin-top:8px">Three big buttons appear on the screen edges: <b>▶ Next</b> (right), <b>⏸ Pause / Play</b> (left) and
+          <b>💬 Talk to Mochi</b> (top). Look at one until its ring fills, or blink long (½–2 s) to choose the glowing one. Works without calibration
+          (rough eye + head direction); calibrating above makes it more accurate. 2 s pause after each choice, only safe actions, looking down does nothing.</div>
+      </div>
+      <dl>
+        <dt>Mode</dt><dd id="ecMode">off</dd>
+        <dt>Glowing</dt><dd id="ecTarget">—</dd>
+        <dt>Choices</dt><dd><ol id="ecLog" style="margin:0;padding-left:18px"></ol></dd>
+      </dl>
+    </div>
+  </section>
 </main>
+
+<button class="ec-btn ec-right" data-ec="next" aria-label="Next"><svg viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" class="ec-track"/><circle cx="36" cy="36" r="30" class="ec-fill"/><text x="36" y="44" text-anchor="middle" class="ec-emoji">▶</text></svg><span>Next</span></button>
+<button class="ec-btn ec-left" data-ec="pause" aria-label="Pause"><svg viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" class="ec-track"/><circle cx="36" cy="36" r="30" class="ec-fill"/><text x="36" y="44" text-anchor="middle" class="ec-emoji">⏸</text></svg><span>Pause</span></button>
+<button class="ec-btn ec-top" data-ec="talk" aria-label="Talk to Mochi"><svg viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" class="ec-track"/><circle cx="36" cy="36" r="30" class="ec-fill"/><text x="36" y="44" text-anchor="middle" class="ec-emoji">💬</text></svg><span>Talk to Mochi</span></button>
 
 <div class="gdot" id="pageDot"></div>
 <div id="calib"><div class="target" id="ctarget"></div><div class="msg" id="cmsg"></div></div>
@@ -275,7 +324,7 @@ async function start() {
   tracker = new FaceSignalTracker();
   rough.reset(); kalman.reset();
   $('status').textContent = 'Camera on (on this computer only)';
-  for (const id of ['stop', 'relearn', 'calibrate']) $(id).disabled = false;
+  for (const id of ['stop', 'relearn', 'calibrate', 'ecStart']) $(id).disabled = false;
   timer = setInterval(step, 33); // ~30 fps: EyeTrax reads every camera frame (~30 samples per calibration dot)
 }
 
@@ -287,7 +336,8 @@ function stop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   $('empty').hidden = false;
   $('start').disabled = false;
-  for (const id of ['stop', 'relearn', 'calibrate']) $(id).disabled = true;
+  for (const id of ['stop', 'relearn', 'calibrate', 'ecStart']) $(id).disabled = true;
+  ecToggle(false);
   $('gdot').hidden = true;
   $('pageDot').style.display = 'none';
   $('status').textContent = 'Camera off';
@@ -327,6 +377,8 @@ function step() {
     }
   }
 
+  ecBlink(b); // Eye Control: long blink (checked before the blink-skip below)
+
   // expressions (exactly what the extension uses)
   const changed = tracker.update({ blendshapes: b, ...angles }, now);
   renderBars(b);
@@ -363,6 +415,7 @@ function step() {
   }
   lastGaze = g;
   renderGaze(g, iris);
+  ecGaze(g);
 }
 
 function renderBars(b) {
@@ -556,6 +609,104 @@ function finishTune(cancelled = false) {
 }
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && tuning) finishTune(true); });
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------- Eye Control demo (dwell select + long blink), self-contained on this page ----------
+const EC = { right: 0.82, left: 0.18, top: 0.15, sticky: 0.05, cooldownMs: 2000, graceMs: 250 };
+const RING = 2 * Math.PI * 30;
+const SHORTS = [
+  { title: 'A puppy meets snow', sub: '🐶❄️', bg: '#4f7cff', line: 'Its little paws keep sinking! 😂' },
+  { title: 'Cat vs. cucumber', sub: '🐱🥒', bg: '#2fa36b', line: 'That jump was HUGE! 😮' },
+  { title: 'Tiny pancake art', sub: '🥞🎨', bg: '#e08a2e', line: 'I want to eat that one 😋' },
+  { title: 'Bubble science', sub: '🫧🔬', bg: '#8a5ce0', line: 'A bubble inside a bubble?! 🤩' },
+  { title: 'Goat on a trampoline', sub: '🐐🤸', bg: '#d94f7a', line: 'Boing boing boing! 😆' },
+];
+const ec = { on: false, target: null, start: 0, lostAt: null, cooldownUntil: 0, closedAt: null, index: 0, paused: false };
+
+function ecTargetFor(p) {
+  const m = (t) => (t === ec.target ? EC.sticky : 0);
+  if (p.x > EC.right - m('next')) return 'next';
+  if (p.x < EC.left + m('pause')) return 'pause';
+  if (p.y < EC.top + m('talk') && p.x > 1 / 3 - m('talk') && p.x < 2 / 3 + m('talk')) return 'talk';
+  return null;
+}
+
+function ecRender(progress = 0) {
+  document.querySelectorAll('.ec-btn').forEach((btn) => {
+    const glowing = btn.dataset.ec === ec.target;
+    btn.classList.toggle('glow', glowing);
+    btn.querySelector('.ec-fill').style.strokeDashoffset = RING * (1 - (glowing ? progress : 0));
+  });
+  const pauseBtn = document.querySelector('[data-ec="pause"]');
+  pauseBtn.querySelector('span').textContent = ec.paused ? 'Play' : 'Pause';
+  pauseBtn.querySelector('.ec-emoji').textContent = ec.paused ? '▶' : '⏸';
+  $('ecTarget').textContent = ec.target ? `${ec.target} (${Math.round(progress * 100)}%)` : '—';
+}
+
+function ecShowShort() {
+  const sh = SHORTS[ec.index % SHORTS.length];
+  $('ecShort').style.background = sh.bg;
+  $('ecShortTitle').textContent = `Short ${ec.index % SHORTS.length + 1} of ${SHORTS.length}: ${sh.title}`;
+  $('ecShortSub').textContent = sh.sub;
+  $('ecShort').classList.toggle('is-paused', ec.paused);
+}
+
+function ecChoose(target, via) {
+  const now = performance.now();
+  ec.cooldownUntil = now + EC.cooldownMs;
+  const btn = document.querySelector(`[data-ec="${target}"]`);
+  ec.target = null; ec.lostAt = null;
+  btn.classList.add('chosen');
+  setTimeout(() => btn.classList.remove('chosen'), 900);
+  if (target === 'next') { ec.index++; ec.paused = false; $('ecBubble').textContent = '🍡 Mochi: Ooh, a new one! 👉'; }
+  else if (target === 'pause') { ec.paused = !ec.paused; $('ecBubble').textContent = ec.paused ? '🍡 Mochi: Paused! Take your time 😊' : '🍡 Mochi: And we\'re back! ▶'; }
+  else $('ecBubble').textContent = `🍡 Mochi: ${SHORTS[ec.index % SHORTS.length].line}`;
+  ecShowShort();
+  ecRender(0);
+  const how = via === 'blink' ? 'long blink' : via === 'click' ? 'clicked' : `looked ${(+$('ecDwell').value / 1000).toFixed(1)} s`;
+  const li = document.createElement('li');
+  li.textContent = `${new Date().toLocaleTimeString([], { hour12: false })} · ${{ next: '▶ Next', pause: '⏯ Pause / Play', talk: '💬 Talk to Mochi' }[target]} (${how}${model.trained ? '' : ', rough'})`;
+  $('ecLog').prepend(li);
+  while ($('ecLog').children.length > 8) $('ecLog').lastChild.remove();
+}
+
+/** Every gaze point (fraction of the screen). Dwell: the ring fills while you keep looking. */
+function ecGaze(g) {
+  if (!ec.on) return;
+  const now = performance.now();
+  if (now < ec.cooldownUntil) { ec.target = null; ecRender(0); return; }
+  const raw = ecTargetFor(g);
+  if (raw && raw === ec.target) ec.lostAt = null;
+  else if (raw) { ec.target = raw; ec.start = now; ec.lostAt = null; }
+  else if (ec.target) { ec.lostAt ??= now; if (now - ec.lostAt > EC.graceMs) ec.target = null; }
+  if (!ec.target) { ecRender(0); return; }
+  const progress = Math.min(1, (now - ec.start) / +$('ecDwell').value);
+  if (progress >= 1 && ec.lostAt === null) { ecChoose(ec.target, 'dwell'); return; }
+  ecRender(progress);
+}
+
+/** A deliberate long blink (both eyes closed 0.5-2 s) chooses the glowing button. */
+function ecBlink(b) {
+  if (!ec.on) return;
+  const now = performance.now();
+  const closed = !!b && ((b.eyeBlinkLeft ?? 0) + (b.eyeBlinkRight ?? 0)) / 2 > 0.6;
+  if (closed) { ec.closedAt ??= now; return; }
+  if (ec.closedAt === null) return;
+  const held = now - ec.closedAt;
+  ec.closedAt = null;
+  if (held >= 500 && held <= 2000 && ec.target && now >= ec.cooldownUntil) ecChoose(ec.target, 'blink');
+}
+
+function ecToggle(on = !ec.on) {
+  ec.on = on;
+  ec.target = null;
+  document.body.classList.toggle('ec-on', on);
+  $('ecStart').textContent = on ? 'Stop Eye Control' : 'Start Eye Control';
+  $('ecMode').textContent = !on ? 'off' : model.trained ? 'on · calibrated gaze' : 'on · rough gaze (no calibration)';
+  ecRender(0);
+}
+document.querySelectorAll('.ec-btn').forEach((btn) => { btn.onclick = () => ecChoose(btn.dataset.ec, 'click'); });
+$('ecStart').onclick = () => ecToggle();
+ecShowShort();
 
 $('start').onclick = start;
 $('stop').onclick = stop;

@@ -43,16 +43,16 @@ def react(req: ReactRequest) -> LLMReactions:
     same = [m for m in req.memory if m.topic == cur.topic and not m.skipped]
     if len(same) >= 2:
         lines = {
-            "witty": f"That's {len(same)} {cur.topic} Shorts in a row. We're basically enrolled now.",
-            "hype": f"{len(same)} {cur.topic} Shorts back to back. THIS IS OUR ARC!",
-            "chill": f"{cur.topic.capitalize()} again. I'm not complaining.",
+            "witty": f"That's {len(same)} {cur.topic} Shorts in a row. We're turning into experts! 😄",
+            "hype": f"{len(same)} {cur.topic} Shorts in a row, you and me! Woohoo!",
+            "chill": f"{cur.topic.capitalize()} again. We really like these, huh?",
         }
         return LLMReactions(reactions=[LLMReaction(text=lines[req.personality], importance=0.85, is_callback=True, preferred_timing="after_video")])
     if "fail" in cur.themes:
         lines = {
-            "witty": "Bold of the title to admit it upfront.",
-            "hype": "Respect for posting the fail, honestly!",
-            "chill": "Happens to the best of us.",
+            "witty": "Oops! Even the video knew that was coming. 😄",
+            "hype": "Oopsie! But they'll try again, you'll see!",
+            "chill": "Oops. That's okay, we all make mistakes.",
         }
         return LLMReactions(reactions=[LLMReaction(text=lines[req.personality], importance=0.6, is_callback=False, preferred_timing="after_video")])
     return LLMReactions(reactions=[])

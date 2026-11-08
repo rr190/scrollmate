@@ -38,6 +38,8 @@ export type BgRequest =
       frequency: Frequency;
     }
   | { type: 'OPEN_STAGE' }
+  // Mochi kindly notices the child's feeling: only the expression label goes to the backend, never an image
+  | { type: 'FEELING_LINE'; videoId: string; expression: string; title: string; personality: Personality }
   // webcam (opt-in, on-device): content -> background, and offscreen camera page -> background
   | { type: 'CAMERA_START'; gaze?: boolean }
   // eye tracking (opt-in): content -> background (enable, open calibration); calibration page -> background (saved);
@@ -65,6 +67,7 @@ export type BgRequest =
       captions: string[];
       personality: Personality;
       frequency: Frequency;
+      viewerFeeling?: string; // how the child seems to feel right now (label only, never an image)
     }
   | {
       type: 'CAPTION_REACT';
@@ -75,6 +78,7 @@ export type BgRequest =
       currentTime: number;
       personality: Personality;
       frequency: Frequency;
+      viewerFeeling?: string; // how the child seems to feel right now (label only)
     }
   | { type: 'TELEMETRY'; event: TelemetryEvent };
 
@@ -124,6 +128,14 @@ export interface ObserveResponse {
   final: boolean;
   maxFrames?: number; // effective frame limit for this Short
   belief?: { topic: string; happening: string; confidence: number; emotionArc: string[] };
+  error?: string;
+}
+export interface FeelingLineResponse {
+  line: string | null;
+  emotion: Emotion | null;
+  source?: 'ai' | 'fallback';
+  ms?: number;
+  move?: string;
   error?: string;
 }
 export interface ReactResponse {

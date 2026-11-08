@@ -32,12 +32,14 @@ SPARE_MAX_AGE_S = 90  # Live sessions have a time cap; don't hand out stale spar
 DRAIN_TIMEOUT_S = 6  # max time to let a turn finish (model may also produce audio) before dropping the session
 
 def _system() -> str:
+    from .character import EMOJI_RULE, character_block
     from .prompts import OBSERVE_SYSTEM
 
     rules = OBSERVE_SYSTEM.format(
-        persona="given at the start of each turn",
+        # the same character as every other feature; each turn repeats it with the current energy and age
+        persona=character_block("chill") + "\n(Each turn restates this with the current personality energy; follow the newest.)",
         frequency="How often to comment is also given in each turn.",
-        emoji="No emojis unless the personality is Hype (then at most one).",
+        emoji=EMOJI_RULE,
     )
     return (
         rules

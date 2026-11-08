@@ -26,7 +26,10 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from . import config, mock
 from .emotions import EMOTIONS
+from .character import character_block
 from .feed import feed
+from .journal import journal
+from .tools import maybe_recall
 from .gemini_live import is_live, live
 from .llm import ping, race, structured, warm_up
 from .models import (
@@ -41,6 +44,9 @@ from .models import (
     LLMCommentReaction,
     EmotionCue,
     Event,
+    FeelingRequest,
+    FeelingResponse,
+    LLMFeelingLine,
     LLMAnalysis,
     LLMObserve,
     LLMSwipe,
@@ -61,6 +67,7 @@ from .prompts import (
     analyse_messages,
     caption_messages,
     comment_messages,
+    feeling_messages,
     observe_messages,
     react_messages,
     swipe_messages,
@@ -395,16 +402,22 @@ async def react(req: ReactRequest, request: Request) -> ReactResponse:
     return res
 
 
-async def _react(req: ReactRequest, request: Request) -> tuple[ReactResponse, str]:
+async def _react(req: ReactRequest, request: Request, use_tool: bool = False) -> tuple[ReactResponse, str]:
     current = next((m for m in req.memory if m.video_id == req.current_video_id), None)
     if current is None or current.topic == "unknown":
         return ReactResponse(reactions=[]), "skipped: current Short unknown"
 
+    move = journal.next_move(req.current_video_id, bool(req.viewer_feeling))
     if config.MOCK:
         raw: LLMReactions | None = mock.react(req)
         path = "mock"
     else:
-        raw, winner = await _text_call(LLMReactions, react_messages(req), temperature=0.8, max_tokens=REACT_MAX_TOKENS)
+        messages = react_messages(req, move)
+        if use_tool:
+            messages, looked = await maybe_recall(messages)
+            if looked:
+                feed.publish("status", videoId=req.current_video_id, note=f"The buddy looked back: {looked}")
+        raw, winner = await _text_call(LLMReactions, messages, temperature=0.8, max_tokens=REACT_MAX_TOKENS)
         path = _race_path(winner)
 
     if raw is None:
@@ -415,7 +428,7 @@ async def _react(req: ReactRequest, request: Request) -> tuple[ReactResponse, st
     out: list[ReactionCandidate] = []
     for r in raw.reactions[:2]:
         text = " ".join(r.text.split())
-        if not safe(text):
+        if not safe(text) or not kid_safe(text):
             log.info("dropped unsafe/invalid reaction: %r", text)
             feed.publish("reaction_blocked", videoId=req.current_video_id, text=text)
             continue
@@ -429,8 +442,11 @@ async def _react(req: ReactRequest, request: Request) -> tuple[ReactResponse, st
                 expires_after_seconds=60 if r.is_callback else (12 if r.preferred_timing == "now" else 25),
                 requires_quiet_moment=r.requires_quiet_moment,
                 is_callback=r.is_callback,
+                move=move,
             )
         )
+    for c in out:
+        journal.note_proposed(c.text, c.move)
     log.info("react %s -> %s", req.current_video_id, [c.text for c in out])
     return ReactResponse(reactions=out), path
 
@@ -440,18 +456,21 @@ async def caption(req: CaptionRequest, request: Request) -> CaptionResponse:
     """Fast text-only step: react to captions as they appear (runs alongside frame analysis)."""
     rate_limit(request)
     t0 = time.perf_counter()
-    feed.publish("caption_request", videoId=req.video_id, lines=req.lines[:6], at=req.current_time)
+    feed.publish("caption_request", videoId=req.video_id, lines=req.lines[:6], at=req.current_time, viewerFeeling=req.viewer_feeling)
     out = CaptionResponse()
     path = "mock"
+    journal.update(req.video_id, title=req.title)
+    journal.add_feeling(req.video_id, req.viewer_feeling, req.current_time)
+    move = journal.next_move(req.video_id, bool(req.viewer_feeling))
     if not config.MOCK:
-        raw, winner = await _text_call(LLMCaptionReaction, caption_messages(req), temperature=0.7, max_tokens=CAPTION_MAX_TOKENS)
+        raw, winner = await _text_call(LLMCaptionReaction, caption_messages(req, move), temperature=0.7, max_tokens=CAPTION_MAX_TOKENS)
         path = _race_path(winner)
         if raw is not None and not await request.is_disconnected():
-            out.emotion = raw.emotion
+            out.emotion = gentle_face(raw.emotion, req.viewer_feeling)
             r = raw.reaction
             if r is not None:
                 text = " ".join(r.text.split())
-                if safe(text):
+                if safe(text) and kid_safe(text):
                     out.reactions.append(
                         ReactionCandidate(
                             text=text,
@@ -461,10 +480,13 @@ async def caption(req: CaptionRequest, request: Request) -> CaptionResponse:
                             expires_after_seconds=15,  # about words just said: goes stale fast
                             requires_quiet_moment=True,
                             is_callback=False,
+                            move=move,
                         )
                     )
                 else:
                     feed.publish("reaction_blocked", videoId=req.video_id, text=text)
+    for c in out.reactions:
+        journal.note_proposed(c.text, c.move)
     feed.publish(
         "caption_result",
         videoId=req.video_id,
@@ -516,7 +538,7 @@ async def comment(req: CommentRequest, request: Request) -> CommentResponse:
     if raw.reaction:
         text = " ".join(raw.reaction.text.split())
         trimmed = trim_words(text, 15)
-        if not comment_safe(trimmed):
+        if not kid_safe(trimmed):
             reason = "unsafe_blocked"
         else:
             reason = "too_long_trimmed" if trimmed != text else "line"
@@ -527,6 +549,95 @@ async def comment(req: CommentRequest, request: Request) -> CommentResponse:
                 expires_after_seconds=8, requires_quiet_moment=False, is_callback=False,
             ))
     return report(reason, _race_path(winner))
+
+
+# ---------- feelings: Mochi kindly notices the child's expression (a label, never an image) ----------
+FEELING_FACE = {
+    "happy": "happy", "laughing": "laughing", "surprised": "surprised", "sad": "sad",
+    "scared": "worried", "confused": "curious", "disgusted": "cringe", "angry": "worried",
+}
+FEELING_FALLBACK = {
+    "happy": ["You're smiling! Did that make you happy? 😊", "Ooh, was that a happy one?"],
+    "laughing": ["Hehe, was that super funny? 😄", "You're laughing! Me too!"],
+    "surprised": ["Whoa, did that surprise you too?!", "Wow! Were you surprised? 😮"],
+    "sad": ["Are you okay? 💛 Want a happy one next?", "That felt a bit sad, huh? I'm here."],
+    "scared": ["That was a bit scary, huh? I'm right here. 💛", "Eek! Are you okay?"],
+    "confused": ["Hmm, was that one a bit puzzling? 🤔", "Huh? Did that confuse you too?"],
+    "disgusted": ["Eww, was that yucky? 🤢", "That one was a bit gross, huh?"],
+    "angry": ["Grr, was that annoying? I get it.", "Hmm, did that one bug you?"],
+}
+# On top of comment_safe: nothing about watching them, their body, health, or scary words for kids.
+_KID_BLOCK = re.compile(
+    r"\b(camera|webcam|watching you|your face|face looks|body|weight|sick|ill|illness|hospital|medicine|doctor|"
+    r"disease|pain|hurt\w*|blood|scream\w*|die|dying|dead|stupid|dumb|crybaby)\b",
+    re.I,
+)
+
+
+def gentle_face(emotion, feeling):
+    """While the child seems sad or scared, Mochi never laughs or cringes: it shows care instead."""
+    if feeling in ("sad", "scared") and emotion in ("laughing", "cringe"):
+        return "love" if feeling == "sad" else "worried"
+    return emotion
+
+
+def kid_safe(text: str) -> bool:
+    return comment_safe(text) and not _KID_BLOCK.search(text)
+
+
+_feeling_turn = 0
+
+
+def _fallback_feeling(expression: str) -> str:
+    global _feeling_turn
+    _feeling_turn += 1
+    options = FEELING_FALLBACK[expression]
+    return options[_feeling_turn % len(options)]
+
+
+@app.post("/scrollmate/feeling", response_model=FeelingResponse, response_model_by_alias=True)
+async def feeling(req: FeelingRequest, request: Request) -> FeelingResponse:
+    """One kind line noticing the child's feeling. Receives only the expression label and the Short's known context."""
+    rate_limit(request)
+    t0 = time.perf_counter()
+    out = FeelingResponse(emotion=FEELING_FACE[req.expression])
+    journal.add_feeling(req.video_id, req.expression)
+    out.move = journal.next_move(req.video_id, True)
+
+    def finish(source: str, line: str | None, path: str = "") -> FeelingResponse:
+        out.source, out.ms = source, _ms(t0)
+        out.line = line or _fallback_feeling(req.expression)
+        feed.publish("feeling", videoId=req.video_id, expression=req.expression, ms=out.ms, path=path, source=out.source)
+        return out
+
+    if config.MOCK:
+        return finish("fallback", None, "mock")
+    b = _beliefs.get(req.video_id)
+    context = req.video_summary or (f"{b.topic}: {b.happening}".strip(": ") if b and b.topic != "unknown" else "")
+    try:
+        messages, looked = await maybe_recall(
+            feeling_messages(req.expression, req.title, context, req.personality, req.video_id, out.move or "question"))
+        if looked:
+            feed.publish("status", videoId=req.video_id, note=f"The buddy looked back: {looked}")
+        raw, winner = await asyncio.wait_for(
+            _text_call(LLMFeelingLine, messages, temperature=0.8, max_tokens=120),
+            timeout=4.0,
+        )
+    except asyncio.TimeoutError:
+        return finish("fallback", None, "timeout")
+    except Exception as exc:
+        log.info("feeling line unavailable: %s", type(exc).__name__)
+        return finish("fallback", None, "error")
+    path = _race_path(winner)
+    if raw is None or not raw.line:
+        return finish("fallback", None, path or "silent")
+    line = trim_words(" ".join(raw.line.split()), 12)
+    if not kid_safe(line):
+        return finish("fallback", None, "blocked")
+    if raw.emotion:
+        out.emotion = raw.emotion
+    journal.note_proposed(line, out.move)
+    return finish("ai", line, path)
 
 
 # ---------- live loop: swipe (title, instant) + observe (one frame at a time) ----------
@@ -652,15 +763,19 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
         duration=req.duration,
         captions=req.captions[:4],
         image=req.frame if (req.frame and config.DEV_FEED_IMAGES) else None,
+        viewerFeeling=req.viewer_feeling,
     )
 
     raw: LLMObserve | None = None
     path = "mock"
+    journal.update(req.video_id, title=req.title)
+    journal.add_feeling(req.video_id, req.viewer_feeling, req.frame_time)
+    move = journal.next_move(req.video_id, bool(req.viewer_feeling))
     if config.MOCK:
         path = "mock (no vision)"
     elif req.frame or req.captions or req.title:
-        persona_line = f"Personality: {PERSONAS[req.personality]} {FREQUENCY_HINT[req.frequency]}"
-        raw, winner = await _vision_call(observe_messages(req, b), OBSERVE_MAX_TOKENS, req.video_id, req.frame, persona_line)
+        persona_line = f"{character_block(req.personality)}\n{FREQUENCY_HINT[req.frequency]}"
+        raw, winner = await _vision_call(observe_messages(req, b, move), OBSERVE_MAX_TOKENS, req.video_id, req.frame, persona_line)
         if winner and is_live(config.VISION_MODEL):
             path = winner
         else:
@@ -688,14 +803,15 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
             b.emotion_arc = (b.emotion_arc + [raw.emotion])[-6:]
         b.frames_seen += 1
         b.version += 1
+        journal.update(req.video_id, b.topic, b.happening, b.outcome)
 
         level = _cap_level(raw.level, conf)
-        out.emotion = raw.emotion if level >= 1 else None
+        out.emotion = gentle_face(raw.emotion, req.viewer_feeling) if level >= 1 else None
         out.level = level
         out.change = raw.change if prev_topic != "unknown" or b.frames_seen > 1 else "major"
         if level >= 2 and raw.line:
             text = " ".join(raw.line.split())
-            if safe(text):
+            if safe(text) and kid_safe(text):
                 # Level 2-3 lines show mid-video as a short silent bubble (live comments). Level 3 ranks higher;
                 # level 2 (0.65) clears Balanced/Chatty but not Rare, so frequency still matters.
                 strong = level == 3
@@ -708,6 +824,7 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
                         expires_after_seconds=60 if raw.line_is_callback else 8,
                         requires_quiet_moment=False,
                         is_callback=raw.line_is_callback,
+                        move=move,
                     )
                 )
             else:
@@ -737,6 +854,8 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
     threshold = {"rare": 0.75, "balanced": 0.55, "chatty": 0.4}[req.frequency]
     # A line the selected frequency will discard is not a successfully proposed comment.
     out.reactions = [candidate for candidate in out.reactions if candidate.importance >= threshold]
+    for c in out.reactions:
+        journal.note_proposed(c.text, c.move)
 
     # Understanding a scene and finding a conversational line are different jobs.
     # Give the text model one bounded opportunity when vision understood the reel but stayed face-only.
@@ -750,8 +869,8 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
         context = [m for m in req.memory if m.video_id != req.video_id][-2:] + [_record(b, req.frame_time)]
         try:
             response, comment_path = await asyncio.wait_for(
-                _react(ReactRequest(memory=context, current_video_id=req.video_id,
-                                    personality=req.personality, frequency=req.frequency), request),
+                _react(ReactRequest(memory=context, current_video_id=req.video_id, personality=req.personality,
+                                    frequency=req.frequency, viewer_feeling=req.viewer_feeling), request, use_tool=True),
                 timeout=3,
             )
             for candidate in response.reactions:
@@ -801,6 +920,7 @@ class ModelSettings(BaseModel):
     text_fallback: str | None = None
     race_text: bool | None = None
     frames: str | None = None  # "auto" or "1".."12"
+    audience: str | None = None  # the child's age range, e.g. "5-9"
 
 
 def _provider_key(model: str | None) -> str | None:
@@ -871,6 +991,13 @@ async def set_settings(body: ModelSettings) -> dict:
         if m and k and not config.has_key(k):
             raise HTTPException(400, f"{m} needs {k} in backend/.env")
     race_text = body.race_text if body.race_text is not None else cur["race_text"]
+    if body.audience is not None:
+        try:
+            lo, hi = config.parse_audience(body.audience)
+        except ValueError:
+            lim = config.AUDIENCE_LIMITS
+            raise HTTPException(400, f"audience must be two ages {lim[0]}-{lim[1]}, youngest first, e.g. 5-9")
+        config.set_audience(lo, hi)
     if body.frames is not None:
         f = body.frames.strip().lower()
         if f != "auto" and not (f.isdigit() and 1 <= int(f) <= 12):
@@ -906,6 +1033,36 @@ async def ping_models() -> dict:
 _CLIENT_TYPES = {"short_started", "short_left", "frame", "decision", "delivered", "emotion", "status", "user"}
 
 
+def _journal_event(kind: str, data: dict) -> None:
+    """Keep the session journal in step with what actually happened on screen."""
+    vid = data.get("videoId") if isinstance(data.get("videoId"), str) else None
+    if kind == "short_started" and vid:
+        journal.start(vid, str(data.get("title") or ""))
+    elif kind == "short_left" and vid:
+        journal.left(vid, float(data.get("secondsWatched") or 0), bool(data.get("skipped")))
+    elif kind == "delivered" and isinstance(data.get("text"), str):
+        journal.add_line(vid, data["text"], data.get("move") if isinstance(data.get("move"), str) else None)
+    elif kind == "user" and data.get("present") is not False and not data.get("lookingAway"):
+        journal.add_feeling(vid, data.get("expression") if isinstance(data.get("expression"), str) else None)
+
+
+@app.get("/scrollmate/journal", include_in_schema=False)
+async def journal_view() -> dict:
+    """Dev view of today's journal: what Mochi remembers and which kinds of line it has used."""
+    return {
+        "moveHistory": journal.move_history,
+        "shorts": [{"videoId": e.video_id, "topic": e.topic, "childFelt": e.feeling_labels(), "mochiSaid": e.lines,
+                    "moves": e.moves, "skipped": e.skipped} for e in journal.entries.values()],
+    }
+
+
+@app.post("/scrollmate/journal/clear", include_in_schema=False)
+async def journal_clear() -> dict:
+    """'Clear memory' in the extension also forgets today's journal."""
+    journal.clear()
+    return {"ok": True}
+
+
 @app.post("/scrollmate/events")
 async def client_events(events: list[dict]) -> dict:
     """The extension reports what it is doing (fire-and-forget). Small scalar fields only, no images."""
@@ -917,6 +1074,7 @@ async def client_events(events: list[dict]) -> dict:
         reserved = {"type", "source", "id", "ts"}
         data = {k: v for k, v in ev.items() if k not in reserved and isinstance(v, (str, int, float, bool, type(None)))}
         data = {k: (v[:300] if isinstance(v, str) else v) for k, v in list(data.items())[:20]}
+        _journal_event(t, data)
         feed.publish(t, source="extension", **data)
         n += 1
     return {"accepted": n}

@@ -18,6 +18,7 @@ import type {
   SwipeResponse,
   TelemetryEvent,
   TabMessage,
+  FeelingLineResponse,
   GazeConfig,
 } from '../shared/messages';
 import { GAZE_MODEL_KEY, type GazeModelData } from '../shared/faceSignals';
@@ -258,6 +259,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
             memory,
             personality: msg.personality,
             frequency: msg.frequency,
+            viewerFeeling: msg.viewerFeeling ?? null,
           },
           OBSERVE_TIMEOUT_MS,
           `observe:${msg.videoId}`,
@@ -352,6 +354,20 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
         return { ...empty, error: e instanceof Error ? e.message : String(e) };
       }
     }
+    case 'FEELING_LINE': {
+      try {
+        // Reuse what we already know about this Short; the backend gets the label, never an image.
+        const record = pendingRecords.get(msg.videoId) ?? memory.find((m) => m.videoId === msg.videoId);
+        return await postJson<FeelingLineResponse>(
+          '/scrollmate/feeling',
+          { videoId: msg.videoId, expression: msg.expression, title: msg.title.slice(0, 300),
+            videoSummary: record?.summary.slice(0, 600) ?? '', personality: msg.personality },
+          5_000, `feeling:${sender.tab?.id ?? 'stage'}`,
+        );
+      } catch (e) {
+        return { line: null, emotion: null, error: e instanceof Error ? e.message : String(e) } satisfies FeelingLineResponse;
+      }
+    }
     case 'CANCEL_COMMENT': {
       const key = `comment:${sender.tab?.id ?? 'stage'}:${msg.requestId}`;
       inflight.get(key)?.abort();
@@ -371,6 +387,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
             memory,
             personality: msg.personality,
             frequency: msg.frequency,
+            viewerFeeling: msg.viewerFeeling ?? null,
           },
           CAPTION_TIMEOUT_MS,
           `caption:${msg.videoId}`,
@@ -391,6 +408,8 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
       return { memory };
     case 'CLEAR_MEMORY':
       abortAll();
+      // also forget today's journal on the backend (earlier Shorts, the child's feelings, Mochi's lines)
+      postJson('/scrollmate/journal/clear', {}, 3_000).catch(() => undefined);
       memory = [];
       pendingRecords.clear();
       analysisCache.clear();

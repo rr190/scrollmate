@@ -23,6 +23,10 @@ class ObserveReactionsTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         main._beliefs.clear()
         main._hits.clear()
+        main.journal.clear()
+        self._no_tool = patch.object(main, "maybe_recall", new=AsyncMock(side_effect=lambda m, *a, **k: (m, None)))
+        self._no_tool.start()
+        self.addCleanup(self._no_tool.stop)
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test")
         self.vision = AsyncMock(return_value=(observation(), "stub vision"))
         self.comments = AsyncMock(return_value=(ReactResponse(reactions=[ReactionCandidate(

@@ -83,6 +83,8 @@ export interface ReactionProposal {
   expiresAfterSeconds: number;
   requiresQuietMoment: boolean;
   isCallback: boolean;
+  /** Which kind of line this is (own_feeling / connect / question); the backend journal uses it for variety. */
+  move?: string;
   targetCommentId?: string;
   commentRequestId?: string;
 }

@@ -14,6 +14,10 @@ from app.prompts import COMMENT_STYLE, comment_messages
 class CommentTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         main._hits.clear()
+        main.journal.clear()
+        self._no_tool = patch.object(main, "maybe_recall", new=AsyncMock(side_effect=lambda m, *a, **k: (m, None)))
+        self._no_tool.start()
+        self.addCleanup(self._no_tool.stop)
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test")
         self.payload = dict(requestId="request-1", videoId="video-1", commentId="comment-1",
                             text="The dog thinks that stick fits through the door.", personality="witty")
@@ -60,10 +64,13 @@ class CommentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(lines), 1)
         self.assertLessEqual(len(lines[0]["text"].split()), 15)
 
-    async def test_internet_slang_is_allowed(self):
-        for text in ("I'm dead, the door won", "this never gets old", "the dog is killing it"):
+    async def test_harmless_phrases_are_allowed_but_kid_unsafe_slang_is_not(self):
+        # The audience is a young child, so the kid filter applies to comment replies too.
+        for text in ("this never gets old", "the dog is killing it"):
             raw = LLMCommentReaction(reaction=LLMReaction(text=text, importance=0.7))
             self.assertEqual(len((await self.post_with(raw)).json()["reactions"]), 1, text)
+        raw = LLMCommentReaction(reaction=LLMReaction(text="I'm dead, the door won", importance=0.7))
+        self.assertEqual((await self.post_with(raw)).json()["reactions"], [], "'dead' is not for young kids")
 
     async def test_low_model_importance_is_raised_for_a_chosen_comment(self):
         raw = LLMCommentReaction(emotion="happy", reaction=LLMReaction(text="same, honestly", importance=0.2))

@@ -19,6 +19,8 @@ from .emotions import EMOTION_IDS
 Mood = Literal["funny", "wholesome", "impressive", "fail", "informative", "dramatic", "calm", "unclear"]
 UnderstandingLevel = Literal["visual_and_text", "visual_only", "text_only", "none"]
 Personality = Literal["witty", "hype", "chill"]
+# How the CHILD watching seems to feel (a label from the on-device webcam model, never an image).
+UserExpression = Literal["happy", "laughing", "surprised", "sad", "scared", "confused", "disgusted", "angry"]
 Frequency = Literal["rare", "balanced", "chatty"]
 Timing = Literal["now", "after_video", "next_gap"]
 # How a friend watching beside you would *feel* at a moment (drives the character's face).
@@ -113,6 +115,7 @@ class ReactRequest(Camel):
     personality: Personality = "witty"
     frequency: Frequency = "balanced"
     current_video_id: str
+    viewer_feeling: UserExpression | None = None  # how the child seems to feel right now (label only)
 
 
 class ReactionCandidate(Camel):
@@ -123,6 +126,7 @@ class ReactionCandidate(Camel):
     expires_after_seconds: int = 20
     requires_quiet_moment: bool = True
     is_callback: bool = False
+    move: str | None = None  # own_feeling / connect / question (variety; recorded when the line is shown)
 
 
 class ReactResponse(Camel):
@@ -153,6 +157,7 @@ class CaptionRequest(Camel):
     memory: list[MemoryItem] = Field(default_factory=list, max_length=3)
     personality: Personality = "witty"
     frequency: Frequency = "balanced"
+    viewer_feeling: UserExpression | None = None  # how the child seems to feel right now (label only)
 
 
 class CaptionResponse(Camel):
@@ -202,6 +207,29 @@ class CommentResponse(Camel):
 class LLMCommentReaction(BaseModel):
     emotion: Emotion | None = Field(None, description="A considerate response to the comment, or null for ordinary or unclear text.")
     reaction: LLMReaction | None = Field(None, description="One brief response to the selected comment, or null. Never invent video events or attack a commenter.")
+
+
+# ---------- feelings: Mochi kindly notices the child's expression (label only, never an image) ----------
+
+class FeelingRequest(Camel):
+    video_id: str = Field(min_length=1, max_length=64)
+    expression: UserExpression
+    title: str = Field(default="", max_length=300)
+    video_summary: str = Field(default="", max_length=600)
+    personality: Personality = "witty"
+
+
+class FeelingResponse(Camel):
+    line: str | None = None
+    emotion: Emotion | None = None  # Mochi's face while it says the line
+    source: Literal["ai", "fallback"] = "fallback"
+    ms: int = 0
+    move: str | None = None
+
+
+class LLMFeelingLine(BaseModel):
+    line: str | None = Field(None, description="One short, kind question or note to a child about how they seem to feel, or null.")
+    emotion: Emotion | None = Field(None, description="Mochi's face while saying it: usually the same feeling, gentle for sad or scared.")
 
 
 # ---------- swipe step: instant prediction from the title ----------
@@ -267,6 +295,7 @@ class ObserveRequest(Camel):
     memory: list[MemoryItem] = Field(default_factory=list, max_length=3)
     personality: Personality = "witty"
     frequency: Frequency = "balanced"
+    viewer_feeling: UserExpression | None = None  # how the child seems to feel right now (label only)
 
 
 class LLMObserve(BaseModel):

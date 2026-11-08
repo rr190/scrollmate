@@ -14,10 +14,12 @@ import {
   type CaptureResponse,
   type ObserveResponse,
   type ReactResponse,
+  type FeelingLineResponse,
   type SwipeResponse,
   type TelemetryEvent,
 } from '../shared/messages';
 import { predictMoment } from '../shared/moments';
+import { FeelingNoticer } from '../shared/feelings';
 import { GAZE_MODEL_KEY, gazeZone, screenToViewport, ZoneDwell, type GazeModelData, type GazeZone, type UserSignal } from '../shared/faceSignals';
 import { CueTrack, type Emotion, type EmotionCue } from '../shared/emotions';
 import { TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
@@ -477,9 +479,77 @@ export class Controller {
     };
   }
 
+  // ---------- Mochi kindly notices the child's feeling ("You're smiling! Did that make you happy?") ----------
+  private feelings = new FeelingNoticer();
+  private feelingShort: { id: string | null; at: number } = { id: null, at: 0 };
+
+  private tickFeelings(videoId: string | null, now: number) {
+    if (videoId !== this.feelingShort.id) this.feelingShort = { id: videoId, at: now };
+    const st = this.state.settings, u = this.state.user;
+    if (!u) return;
+    const expression = this.feelings.update({
+      now,
+      enabled: st.enabled && st.userCam && this.state.camera === 'on',
+      videoId,
+      shortStartedAt: this.feelingShort.at,
+      present: u.present,
+      lookingAway: u.lookingAway,
+      expression: u.expression,
+      strength: u.strength,
+      busy: !!this.state.bubble || this.speaking || !!this.state.commentVisit,
+    });
+    if (expression && videoId) void this.noticeFeeling(videoId, expression);
+  }
+
+  private async noticeFeeling(videoId: string, expression: string) {
+    const epoch = this.epoch;
+    const { personality } = this.state.settings;
+    const title = this.demo ? this.demo.short.title : this.ctx?.title ?? '';
+    console.log(LOG, 'noticing your feeling:', expression);
+    this.emit({ type: 'user', videoId, feelingNoticed: expression });
+    try {
+      const res = await sendBg<FeelingLineResponse>({ type: 'FEELING_LINE', videoId, expression, title, personality });
+      const now = Date.now();
+      const u = this.state.user;
+      const current = this.demo ? this.demo.short.videoId : this.watcher?.currentId;
+      // still a good moment? same Short, nothing else on screen, child still here
+      if (epoch !== this.epoch || !res?.line || current !== videoId || this.state.bubble || this.speaking || this.state.commentVisit || !u?.present || u.lookingAway) return;
+      if (res.emotion) this.cues.fireNow(videoId, res.emotion, 0.8, this.snapshot().currentTime, now);
+      this.deliver({
+        candidate: {
+          id: newId(), text: res.line, importance: 1, targetVideoId: videoId, preferredTiming: 'now', expiresAfterSeconds: 8,
+          requiresQuietMoment: false, isCallback: false, createdAt: now, move: res.move,
+        },
+        mode: this.state.settings.voice ? 'voice' : 'bubble',
+        reason: `noticed you looked ${expression}${res.source === 'fallback' ? ' (written line)' : ''}`,
+      });
+    } catch {
+      /* no line this time */
+    } finally {
+      this.feelings.done();
+    }
+  }
+
+  private lastFeeling: { expression: UserSignal['expression']; at: number } | null = null;
+
+  /** The child's feeling in the last 5 s (label only), to blend into the reel comment. */
+  private viewerFeeling(): UserSignal['expression'] | undefined {
+    const st = this.state.settings, u = this.state.user;
+    if (!st.userCam || this.state.camera !== 'on' || !this.lastFeeling) return undefined;
+    if (u && (!u.present || u.lookingAway)) return undefined;
+    return Date.now() - this.lastFeeling.at < 5_000 ? this.lastFeeling.expression : undefined;
+  }
+
+  /** A reel line that carried a feeling counts as noticing it (no separate "noticed" line on this Short). */
+  private noteBlended(videoId: string, feeling: UserSignal['expression'] | undefined, lines: number) {
+    if (feeling && lines > 0) this.feelings.markNoticed(videoId, feeling, Date.now());
+  }
+
   private onUserSignal(sig: UserSignal) {
     const prev = this.state.user;
     this.set({ user: sig });
+    // remember the last real feeling; viewerFeeling() keeps it for 5 s after it fades
+    if (sig.present && !sig.lookingAway && sig.expression !== 'neutral') this.lastFeeling = { expression: sig.expression, at: Date.now() };
     this.emit({ type: 'user', expression: sig.expression, present: sig.present, lookingAway: sig.lookingAway });
     if (!this.state.settings.enabled || !this.state.settings.userCam) return;
     // Mirror the viewer: laugh along, look surprised with them (a face, never a bubble).
@@ -638,6 +708,7 @@ export class Controller {
       this.set({ demo: this.demo.view(now) });
     }
     const snap = this.snapshot();
+    this.tickFeelings(snap.videoId, now);
     if (this.state.settings.enabled) {
       const d = this.engine.tick(snap, now);
       this.flushDecisions(); // log the decision first, then the delivery it caused
@@ -673,6 +744,7 @@ export class Controller {
     console.log(LOG, 'DELIVER', d.mode, `"${d.candidate.text}"`, '-', d.reason);
     this.emit({
       type: 'delivered', videoId: d.candidate.targetVideoId, text: d.candidate.text, mode: d.mode, reason: d.reason,
+      move: d.candidate.move ?? null, // the backend journal records which kind of line was shown
       gazeZone: this.gazeActive() ? this.gazeDwell.zone : null, // where your eyes were when it spoke
     });
     window.clearTimeout(this.bubbleTimer);
@@ -879,6 +951,7 @@ export class Controller {
     const at = Math.round(video.currentTime * 10) / 10;
     this.emit({ type: 'status', videoId: ctx.videoId, note: `captions sent: ${lines.join(' | ').slice(0, 200)}`, t: at });
     try {
+      const feeling = this.viewerFeeling();
       const res = await sendBg<CaptionReactResponse>({
         type: 'CAPTION_REACT',
         videoId: ctx.videoId,
@@ -888,9 +961,11 @@ export class Controller {
         currentTime: at,
         personality: this.state.settings.personality,
         frequency: this.state.settings.frequency,
+        viewerFeeling: feeling,
       });
       if (!this.isCurrent(ctx)) return; // scrolled away
       if (res?.emotion) this.showFace(ctx, res.emotion, 0.8, 'captions', at);
+      this.noteBlended(ctx.videoId, feeling, res?.reactions?.length ?? 0);
       this.propose(res?.reactions ?? []);
     } catch {
       /* backend down: captions are optional */
@@ -918,6 +993,7 @@ export class Controller {
     this.busy++;
     this.tick();
     try {
+      const feeling = this.viewerFeeling();
       const res = await sendBg<ObserveResponse>({
         type: 'OBSERVE',
         videoId: ctx.videoId,
@@ -931,6 +1007,7 @@ export class Controller {
         captions,
         personality: this.state.settings.personality,
         frequency: this.state.settings.frequency,
+        viewerFeeling: feeling,
       });
       if (!this.isCurrent(ctx)) return;
       if (typeof res?.maxFrames === 'number' && res.maxFrames > 0) ctx.maxFrames = res.maxFrames;
@@ -944,6 +1021,7 @@ export class Controller {
       if (res?.emotion && res.level >= 1) this.showFace(ctx, res.emotion, res.level >= 3 ? 1 : 0.8, `frame ${index}`, t);
       // No "avoid" time: the line is a reaction to a moment that just happened, so showing it now is the point.
       // (Level 2-3 lines are marked 'now' by the backend; the timing engine still applies the reading gap.)
+      this.noteBlended(ctx.videoId, feeling, res?.reactions?.length ?? 0);
       this.propose(res?.reactions ?? []);
       // Plan the next frame: trust the model's guess only within sane bounds.
       const now = video.currentTime;

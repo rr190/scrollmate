@@ -157,6 +157,12 @@
         </select></div>
       <div class="note" style="align-self:end">Each frame is one vision call (~1–2 s). More frames = better coverage, more cost / rate limit use. Applies from the next Short.</div>
     </div>
+    <div class="row" style="max-width:520px">
+      <div><label for="mAgeLo">Child's age</label>
+        <span style="display:flex;align-items:center;gap:6px">from <input type="number" id="mAgeLo" min="3" max="14" style="width:64px">
+        to <input type="number" id="mAgeHi" min="3" max="14" style="width:64px"></span></div>
+      <div class="note" style="align-self:end">The buddy talks to a child this age in every feature: words, jokes and topics follow it. Applies to the next line.</div>
+    </div>
     <div class="btns">
       <button class="primary" id="mApply">Apply custom</button>
       <button id="mPing">⚡ Speed test</button>
@@ -514,6 +520,8 @@ async function loadModels(view) {
   $('mTextFb').value = cur.text_fallback || '';
   $('mRace').checked = !!cur.race_text;
   $('mFrames').value = cur.frames || 'auto';
+  const [ageLo, ageHi] = String(cur.audience || '5-9').split('-');
+  $('mAgeLo').value = ageLo; $('mAgeHi').value = ageHi || ageLo;
   $('knownModels').innerHTML = view.knownModels.map((m) => `<option value="${esc(m)}">${view.textOnly.includes(m) ? 'text only' : ''}</option>`).join('');
   $('modelsState').textContent = view.mock ? 'MOCK mode: no LLM calls are made' : (view.activePreset ? `preset: ${view.presets[view.activePreset].label}` : 'custom');
 }
@@ -535,6 +543,9 @@ $('mApply').onclick = () => applyModels({
   frames: $('mFrames').value,
 });
 $('mFrames').onchange = () => applyModels({ frames: $('mFrames').value });
+const applyAge = () => applyModels({ audience: `${$('mAgeLo').value}-${$('mAgeHi').value}` });
+$('mAgeLo').onchange = applyAge;
+$('mAgeHi').onchange = applyAge;
 $('mPing').onclick = async () => {
   const btn = $('mPing');
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Testing…';
@@ -620,6 +631,10 @@ function trackAttention(card, ev) {
   renderAttn(card);
 }
 
+// The child's feeling sent with a frame / captions, so the comment can blend the moment with it.
+const CHILD_FACE = { laughing: '😂', happy: '😊', surprised: '😮', sad: '😢', disgusted: '🤢', scared: '😨', angry: '😠', confused: '🤨' };
+const childFeeling = (ev) => (ev.viewerFeeling ? ` <span class="chip">child: ${CHILD_FACE[ev.viewerFeeling] || ''} ${esc(ev.viewerFeeling)}</span>` : '');
+
 function onFeedEvent(ev) {
   const vid = ev.videoId || ev.target || 'unknown';
   // Decisions belong to the Short the reaction is about.
@@ -677,7 +692,7 @@ function onFeedEvent(ev) {
       break;
     case 'observe_request':
       if (ev.image) card.el.querySelector('.img').innerHTML = `<img class="strip" alt="what the AI saw" src="data:image/jpeg;base64,${ev.image}">`;
-      line(card, ev.ts, `observe ${ev.n}`, 'ai', `frame at ${ev.t}s${ev.duration ? ' of ' + Math.round(ev.duration) + 's' : ''}${ev.captions?.length ? ' + captions' : ''}`);
+      line(card, ev.ts, `observe ${ev.n}`, 'ai', `frame at ${ev.t}s${ev.duration ? ' of ' + Math.round(ev.duration) + 's' : ''}${ev.captions?.length ? ' + captions' : ''}${childFeeling(ev)}`);
       break;
     case 'observe_result': {
       const failed = /FAILED/.test(ev.path || '');
@@ -693,7 +708,7 @@ function onFeedEvent(ev) {
       break;
     }
     case 'caption_request':
-      line(card, ev.ts, 'captions', 'ai', `“${esc((ev.lines || []).join(' | '))}”${ev.at != null ? ` <span class="k">at ${ev.at}s</span>` : ''}`);
+      line(card, ev.ts, 'captions', 'ai', `“${esc((ev.lines || []).join(' | '))}”${ev.at != null ? ` <span class="k">at ${ev.at}s</span>` : ''}${childFeeling(ev)}`);
       break;
     case 'comment_result': {
       const why = { line: 'line', too_long_trimmed: 'line (trimmed to 15 words)', model_silent: 'face only: model chose no line',
@@ -712,7 +727,16 @@ function onFeedEvent(ev) {
     case 'status':
       line(card, ev.ts, 'note', '', esc(ev.note || ''));
       break;
+    case 'feeling': {
+      const face = { laughing: '😂', happy: '😊', surprised: '😮', sad: '😢', disgusted: '🤢', scared: '😨', angry: '😠', confused: '🤨' }[ev.expression] || '';
+      line(card, ev.ts, 'FEELS 💛', 'delivered', `noticed you looked ${face} <b>${esc(ev.expression)}</b> → line <span class="k">(${ev.ms} ms · ${ev.source === 'ai' ? 'AI' : 'written fallback'}${ev.path ? ' · ' + esc(ev.path) : ''})</span>`);
+      break;
+    }
     case 'user': {
+      if (ev.feelingNoticed) {
+        line(card, ev.ts, 'FEELS 💛', 'emotion', `you've looked <b>${esc(ev.feelingNoticed)}</b> for a moment → Mochi will say something kind`);
+        break;
+      }
       if (ev.gazeZone) {
         const where = { video: '🎬 the video', comments: '💬 the comments (video reactions held)', mochi: '🍡 Mochi', elsewhere: 'the page', off_screen: 'off screen (reactions held)' }[ev.gazeZone] || esc(ev.gazeZone);
         line(card, ev.ts, 'EYES', 'emotion', ev.eyeContact ? 'eye contact with Mochi → it smiles back 😊' : `looking at ${where}`);
@@ -725,9 +749,11 @@ function onFeedEvent(ev) {
     case 'emotion':
       line(card, ev.ts, 'FACE', 'emotion', `<span style="font-size:18px">${EMO[ev.emotion] || ''}</span> <b>${esc(ev.emotion)}</b> <span class="k">at ${ev.at}s (moment at ${ev.t}s)${ev.via ? ' · from ' + esc(ev.via) : ''}${ev.sinceSwipeMs != null ? ' · ' + ev.sinceSwipeMs + ' ms after swipe' : ''}</span>`);
       break;
-    case 'delivered':
-      line(card, ev.ts, 'SHOWN', 'delivered', `<span class="bubble">${esc(ev.text)}</span> <span class="k">${esc(ev.mode)} · ${esc(ev.reason)}</span>`);
+    case 'delivered': {
+      const move = { own_feeling: '💭 own feeling', connect: '🔗 remembers', question: '❓ asks' }[ev.move];
+      line(card, ev.ts, 'SHOWN', 'delivered', `<span class="bubble">${esc(ev.text)}</span>${move ? ` <span class="chip">${move}</span>` : ''} <span class="k">${esc(ev.mode)} · ${esc(ev.reason)}</span>`);
       break;
+    }
     default:
       line(card, ev.ts, ev.type, '', esc(JSON.stringify(ev).slice(0, 200)));
   }

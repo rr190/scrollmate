@@ -28,6 +28,23 @@ RACE_TEXT = _bool("SCROLLMATE_RACE_TEXT", True)
 RACE_VISION = _bool("SCROLLMATE_RACE_VISION", True)
 # Frames analysed per Short: "auto" (by length: <=15 s -> 4, <=30 s -> 6, longer -> 8) or a fixed number 1-12.
 FRAMES = os.getenv("SCROLLMATE_FRAMES", "auto").strip().lower()
+# Who the buddy talks to: a child in this age range (editable in /ui). Words, jokes and topics follow it.
+AUDIENCE_LIMITS = (3, 14)
+
+
+def parse_audience(value: str) -> tuple[int, int]:
+    """"5-9" -> (5, 9). Raises ValueError unless both ages are within AUDIENCE_LIMITS and min <= max."""
+    lo_s, _, hi_s = value.replace(" ", "").partition("-")
+    lo, hi = int(lo_s), int(hi_s or lo_s)
+    if not (AUDIENCE_LIMITS[0] <= lo <= hi <= AUDIENCE_LIMITS[1]):
+        raise ValueError(f"ages must be {AUDIENCE_LIMITS[0]}-{AUDIENCE_LIMITS[1]}, youngest first")
+    return lo, hi
+
+
+try:
+    AUDIENCE_MIN, AUDIENCE_MAX = parse_audience(os.getenv("SCROLLMATE_AUDIENCE", "5-9"))
+except ValueError:
+    AUDIENCE_MIN, AUDIENCE_MAX = 5, 9
 # The swipe step answers from the title only; give up (stay silent) after this long.
 SWIPE_DEADLINE_S = float(os.getenv("SCROLLMATE_SWIPE_DEADLINE", "1.5"))
 # Gemini Live vision lane: per-frame deadline before falling back to the regular vision model.
@@ -129,6 +146,7 @@ def current_models() -> dict:
         "text_fallback": TEXT_FALLBACK_MODEL,
         "race_text": RACE_TEXT,
         "frames": FRAMES,
+        "audience": f"{AUDIENCE_MIN}-{AUDIENCE_MAX}",
     }
 
 
@@ -149,6 +167,11 @@ def frames_for(duration: float) -> int:
 def set_frames(value: str) -> None:
     global FRAMES
     FRAMES = value
+
+
+def set_audience(lo: int, hi: int) -> None:
+    global AUDIENCE_MIN, AUDIENCE_MAX
+    AUDIENCE_MIN, AUDIENCE_MAX = lo, hi
 
 
 def apply_models(vision: str, text: str, vision_fallback: str | None, text_fallback: str | None, race_text: bool) -> None:
