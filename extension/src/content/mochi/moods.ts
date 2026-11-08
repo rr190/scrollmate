@@ -2,9 +2,8 @@
  * ScrollMate moods -> Mochi looks.
  *
  * Faces, sprout poses, blush, effects and body motions are taken from the Companio landing page
- * (scrollmateWeb/companio-landing/src/companion/emotions.ts). The landing page animates them with the
- * `motion` library; the extension may not use an animation framework, so `motionCss()` turns the same
- * keyframe tracks into plain CSS @keyframes.
+ * (scrollmateWeb/companio-landing/src/companion/emotions.ts). Like the landing page, the extension animates
+ * them with the `motion` library (mochi/MochiAnimated.tsx for Mochi, avatars/AvatarMotion.tsx for the rest).
  */
 import type { Mood } from '../controller';
 import type { FaceSpec } from './faceParts';
@@ -141,34 +140,3 @@ export const LOOKS: Record<Mood, Look> = {
     motion: { x: [0, -1.5, 1.5, -1.5, 0], scaleY: [0.96, 0.94, 0.96, 0.94, 0.96], scaleX: [1.03, 1.05, 1.03, 1.05, 1.03], duration: 0.5, ease: 'linear' },
   },
 };
-
-const EASE: Record<NonNullable<BodyMotion['ease']>, string> = {
-  easeInOut: 'cubic-bezier(0.42, 0, 0.58, 1)',
-  easeOut: 'cubic-bezier(0, 0, 0.58, 1)',
-  linear: 'linear',
-};
-
-/** CSS @keyframes for every mood's body motion (one string, injected once into the shadow root). */
-export function motionCss(): string {
-  let css = '';
-  for (const [mood, look] of Object.entries(LOOKS) as [Mood, Look][]) {
-    const m = look.motion;
-    const tracks = (['x', 'y', 'rotate', 'scaleX', 'scaleY'] as const).filter((k) => m[k]);
-    const n = Math.max(...tracks.map((k) => m[k]!.length), 2);
-    const total = m.duration + (m.repeatDelay ?? 0);
-    const times = m.times ?? Array.from({ length: n }, (_, i) => i / (n - 1));
-    const at = (k: (typeof tracks)[number], i: number, rest: number) => m[k]?.[Math.min(i, (m[k]?.length ?? 1) - 1)] ?? rest;
-    let frames = '';
-    for (let i = 0; i < n; i++) {
-      const pct = ((times[i] * m.duration) / total) * 100;
-      frames += `${pct.toFixed(2)}%{transform:translate(${at('x', i, 0)}px,${at('y', i, 0)}px) rotate(${at('rotate', i, 0)}deg) scale(${at('scaleX', i, 1)},${at('scaleY', i, 1)})}`;
-    }
-    if (m.repeatDelay) {
-      // hold the last pose during the repeat delay
-      frames += `100%{transform:translate(${at('x', n - 1, 0)}px,${at('y', n - 1, 0)}px) rotate(${at('rotate', n - 1, 0)}deg) scale(${at('scaleX', n - 1, 1)},${at('scaleY', n - 1, 1)})}`;
-    }
-    css += `@keyframes sm-body-${mood}{${frames}}`;
-    css += `.sm-body-${mood}{animation:sm-body-${mood} ${total}s ${EASE[m.ease ?? 'easeInOut']} infinite;}`;
-  }
-  return css;
-}

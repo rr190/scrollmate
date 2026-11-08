@@ -134,9 +134,7 @@
   opacity: 1;
   transform: none;
 }
-.sm-blinker.sm-on {
-  animation: sm-blink 5.5s infinite;
-}
+/* blinking is random now (motion, in the avatar components) */
 .sm-cheeks ellipse {
   opacity: 0.6;
   transition: opacity 0.3s ease;
@@ -452,9 +450,6 @@
 .sm-mochi-talk {
   transform-box: fill-box;
   transform-origin: center;
-}
-.sm-mochi-blink {
-  animation: sm-mochi-blink 4.3s infinite;
 }
 .sm-mochi-talk {
   animation: sm-mochi-talk 0.22s ease-in-out infinite alternate;

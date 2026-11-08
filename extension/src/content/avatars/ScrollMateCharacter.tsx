@@ -1,5 +1,7 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { motion } from 'motion/react';
 import type { Mood } from '../controller';
+import { useRandomBlink } from './AvatarMotion';
 
 /**
  * The original ScrollMate avatar: cream mochi, rounded ears, purple headphones.
@@ -39,8 +41,6 @@ const FACES: Record<Mood, Face> = {
   bored: { eyes: 'closed', mouth: 'flat', brows: 'flat', extras: [] },
 };
 
-/** Mood changes that deserve a bigger bounce (reactions to the video). */
-const BIG = new Set<Mood>(['surprised', 'laughing', 'impressed', 'cringe', 'love']);
 
 function L({ on, children, className = '' }: { on: boolean; children: ReactNode; className?: string }) {
   return <g className={`sm-l ${on ? 'sm-on' : ''} ${className}`}>{children}</g>;
@@ -60,33 +60,15 @@ const heart = (cx: number, cy: number, s: number) =>
 
 export function ScrollMateCharacter({ mood }: { mood: Mood }) {
   const f = FACES[mood] ?? FACES.idle;
-  const svgRef = useRef<SVGSVGElement>(null);
-  const prevMood = useRef<Mood>(mood);
-
-  useEffect(() => {
-    if (prevMood.current === mood) return;
-    prevMood.current = mood;
-    const el = svgRef.current;
-    if (!el || typeof el.animate !== 'function') return;
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-    const k = BIG.has(mood) ? 1 : 0.5;
-    el.animate(
-      [
-        { transform: 'translateY(0) scale(1, 1)' },
-        { transform: `translateY(${2 * k}px) scale(${1 + 0.07 * k}, ${1 - 0.08 * k})` },
-        { transform: `translateY(${-5 * k}px) scale(${1 - 0.04 * k}, ${1 + 0.05 * k})` },
-        { transform: 'translateY(0) scale(1, 1)' },
-      ],
-      { duration: BIG.has(mood) ? 420 : 300, easing: 'cubic-bezier(.3,1.4,.5,1)' },
-    );
-  }, [mood]);
+  // Body motion (ease-in with overshoot, loops, breathing) comes from the shared AvatarMotion wrapper.
+  const blink = useRandomBlink(['dot', 'big', 'up', 'wide'].includes(f.eyes));
 
   const ex = (e: Extra) => f.extras.includes(e);
   const ink = '#3a2d4d';
   const mouthInk = '#7a3550';
 
   return (
-    <svg ref={svgRef} className={`sm-char sm-classic sm-mood-${mood}`} viewBox="0 0 140 120" aria-hidden="true">
+    <svg className={`sm-char sm-classic sm-mood-${mood}`} viewBox="0 0 140 120" aria-hidden="true">
       <defs>
         <radialGradient id="smBody" cx="45%" cy="35%" r="75%">
           <stop offset="0%" stopColor="#fffaf1" />
@@ -154,7 +136,8 @@ export function ScrollMateCharacter({ mood }: { mood: Mood }) {
         <path d="M79 59 L91 58" className="sm-line sm-thin" />
       </L>
 
-      {/* ---- eyes ---- */}
+      {/* ---- eyes (random natural blinks, like the website) ---- */}
+      <motion.g style={{ scaleY: blink, originY: 0.5 }}>
       <L on={f.eyes === 'dot'} className="sm-blinker">
         <ellipse cx="56" cy="69" rx="5.5" ry="6.5" fill={ink} />
         <ellipse cx="84" cy="69" rx="5.5" ry="6.5" fill={ink} />
@@ -201,6 +184,7 @@ export function ScrollMateCharacter({ mood }: { mood: Mood }) {
         <path d={heart(56, 69, 0.95)} fill="#ff4f7b" />
         <path d={heart(84, 69, 0.95)} fill="#ff4f7b" />
       </L>
+      </motion.g>
 
       {/* ---- mouths ---- */}
       <L on={f.mouth === 'cat'}>
