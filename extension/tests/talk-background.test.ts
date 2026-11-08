@@ -20,7 +20,7 @@ function fixture(createWait?: Promise<void>) {
     runtime: { getURL: url, onMessage: { addListener: (value: typeof listener) => { listener = value; } },
       sendMessage: async (message: any) => { media.push(message); return message.type === 'MEDIA_PING' ? { ready: true } : { ok: true }; } },
     storage: { session: { get: async () => ({ memory: [{ videoId: 'reel-1', summary: 'A cake has purple frosting.' }] }), set: async () => {} },
-      local: { get: async () => ({}), set: async () => {} } },
+      local: { get: async () => ({}), set: async () => {}, remove: async () => {} } },
     offscreen: { Reason: { USER_MEDIA: 'USER_MEDIA' }, hasDocument: async () => exists,
       createDocument: async () => { creates++; await createWait; exists = true; }, closeDocument: async () => { closes++; exists = false; } },
     tabs: { sendMessage: async (tabId: number, message: any) => { sent.push({ tabId, message }); },
@@ -41,7 +41,7 @@ function fixture(createWait?: Promise<void>) {
 }
 
 test('one shared document keeps camera and continuous microphone lifecycles independent', async () => {
-  const f = fixture(); await f.request({ type: 'CAMERA_START', gaze: true }); await f.start();
+  const f = fixture(); await f.request({ type: 'CAMERA_START' }); await f.start();
   assert.equal(f.creates, 1);
   const start = f.media.find((message) => message.type === 'TALK_START');
   assert.equal(start.url, 'ws://test-backend/scrollmate/talk/live');
@@ -96,7 +96,7 @@ test('microphone permission failures open setup and release the active session',
 });
 
 test('the toolbar off switch cancels live voice before closing the shared media document', async () => {
-  const f = fixture(); await f.request({ type: 'CAMERA_START', gaze: true }); await f.start();
+  const f = fixture(); await f.request({ type: 'CAMERA_START' }); await f.start();
   await f.toolbarOff();
   assert(f.media.some((message) => message.type === 'TALK_CANCEL' && message.requestId === 'session-1'));
   assert.equal(f.closes, 1);

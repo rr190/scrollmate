@@ -5,17 +5,13 @@
  * indicator belong to the extension, not to youtube.com. Frames never leave this page: only labels
  * like {expression: 'laughing', lookingAway: false} are sent to the background worker.
  */
+import './quietMediapipe'; // first: keeps MediaPipe's start-up logs out of the extension's Errors list
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
-import {
-  BlinkDetector, eyeAspectRatio, FaceSignalTracker, gazeFeatureVector, gazeFeatureVectorPlus, headAngles, isRealBlink,
-  KalmanGaze, RidgeGaze, type GazeModelData,
-} from '../shared/faceSignals';
-import type { GazeConfig, TalkContext } from '../shared/messages';
+import { FaceSignalTracker, headAngles } from '../shared/faceSignals';
+import type { TalkContext } from '../shared/messages';
 import { RealtimeVoiceClient } from '../audio/realtimeVoice';
 
 const FRAME_MS = 100; // ~10 fps is plenty for expressions
-const GAZE_FRAME_MS = 40; // ~25 fps while eye tracking (more samples = steadier gaze)
-const GAZE_SEND_MS = 100; // gaze points to the tab at ~10 per second
 let landmarker: FaceLandmarker | null = null;
 let stream: MediaStream | null = null;
 let video: HTMLVideoElement | null = null;
@@ -24,29 +20,6 @@ const tracker = new FaceSignalTracker();
 let frames = 0;
 let lastBeat = 0;
 let starting = false;
-
-// eye tracking (opt-in): the personal model from the calibration page, run on every frame
-let gaze: { model: RidgeGaze; data: GazeModelData; kalman: KalmanGaze; blink: BlinkDetector } | null = null;
-let gazeOn = false;
-let lastGazeSent = 0;
-
-function applyGazeConfig(c: GazeConfig | undefined) {
-  gazeOn = !!c?.enabled;
-  const data = c?.model ?? null;
-  if (data && data.version === 1 && data !== gaze?.data) {
-    const kalman = new KalmanGaze(50, 0.2, 0.25);
-    // EyeTrax's filter on screen pixels; measurement noise from this person's calibration residuals
-    kalman.setMeasurementNoise(data.noise.x, data.noise.y);
-    gaze = { model: RidgeGaze.fromJSON(data.ridge), data, kalman, blink: new BlinkDetector() };
-  } else if (!data) gaze = null;
-  restartLoop();
-}
-
-function restartLoop() {
-  if (!landmarker) return;
-  self.clearInterval(timer);
-  timer = self.setInterval(step, gazeOn && gaze ? GAZE_FRAME_MS : FRAME_MS);
-}
 
 const send = (msg: Record<string, unknown>) => chrome.runtime.sendMessage(msg).catch(() => undefined);
 const status = (state: string, detail = '') => send({ type: 'CAMERA_STATUS', state, detail });
@@ -71,7 +44,6 @@ async function start() {
 async function startCamera() {
   status('starting');
   try {
-    // 640x480 like the calibration page: the iris needs the pixels for eye tracking
     stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, frameRate: 30 }, audio: false });
   } catch (e) {
     const name = (e as Error).name;
@@ -91,7 +63,6 @@ async function startCamera() {
     return;
   }
   status('on');
-  applyGazeConfig(await chrome.runtime.sendMessage({ type: 'GAZE_GET_CONFIG' }).catch(() => undefined));
   if (!timer) timer = self.setInterval(step, FRAME_MS);
 }
 
@@ -108,7 +79,6 @@ function step() {
       for (const c of cats) blendshapes[c.categoryName] = c.score;
       angles = headAngles(res.facialTransformationMatrixes?.[0]?.data);
     }
-    if (gazeOn && gaze) stepGaze(res.faceLandmarks?.[0], blendshapes, now);
   } catch {
     return; // a bad frame: skip it
   }
@@ -121,24 +91,6 @@ function step() {
     frames = 0;
     lastBeat = now;
   }
-}
-
-function stepGaze(lm: Parameters<typeof gazeFeatureVector>[0], blendshapes: Record<string, number> | null, now: number) {
-  if (!gaze) return;
-  const plus = gaze.data.features === 'eyetrax+blendshapes';
-  const fv = plus ? gazeFeatureVectorPlus(lm, blendshapes, 1) : gazeFeatureVector(lm, 1);
-  if (!fv) return; // no face: the expression tracker already reports "not in view"
-  const ear = eyeAspectRatio(lm, 1);
-  const earBlink = ear !== null && gaze.blink.update(ear);
-  if (plus ? isRealBlink(earBlink, blendshapes) : earBlink) return; // hold through blinks
-  const raw = gaze.model.predict(fv);
-  if (!raw) return;
-  const g = gaze.kalman.step(raw);
-  if (now - lastGazeSent < GAZE_SEND_MS) return;
-  lastGazeSent = now;
-  // only two numbers leave this page: where on the screen (0..1), never a frame
-  const { w, h } = gaze.data.screen;
-  send({ type: 'GAZE', x: Math.round((g.x / w) * 1000) / 1000, y: Math.round((g.y / h) * 1000) / 1000, at: now });
 }
 
 function stop() {
@@ -159,7 +111,6 @@ chrome.runtime.onMessage.addListener((msg: { target?: string; type?: string; req
   if (msg.type === 'TALK_CONTEXT' && msg.context) microphone.update(msg.context);
   if (msg.type === 'TALK_CANCEL') microphone.cancel(msg.requestId);
   if (msg.type === 'CAMERA_START') void start();
-  if (msg.type === 'GAZE_CONFIG') applyGazeConfig((msg as { config?: GazeConfig }).config);
   if (msg.type === 'CAMERA_STOP') {
     stop();
     status('off');

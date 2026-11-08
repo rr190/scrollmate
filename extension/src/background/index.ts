@@ -19,10 +19,8 @@ import type {
   TelemetryEvent,
   TabMessage,
   FeelingLineResponse,
-  GazeConfig,
   TalkContext,
 } from '../shared/messages';
-import { GAZE_MODEL_KEY, type GazeModelData } from '../shared/faceSignals';
 import { badgeFor, HIDDEN_KEY } from '../shared/power';
 import type { Analysis, MemoryRecord, ReactionProposal, Rect } from '../shared/types';
 
@@ -128,17 +126,25 @@ function flushTelemetry() {
   }).catch(() => undefined); // backend down: the feed is optional
 }
 
-function abortAll() {
-  for (const c of inflight.values()) c.abort();
-  inflight.clear();
+/** In-flight keys start with the tab that asked, so one tab's cancel never aborts another tab's requests. */
+type TabKey = number | 'ext';
+const tabKey = (sender: chrome.runtime.MessageSender): TabKey => sender.tab?.id ?? 'ext';
+
+/** Abort one tab's requests, or every request when no tab is given (the toolbar power switch). */
+function abortAll(tab?: TabKey) {
+  for (const [key, c] of inflight) {
+    if (tab !== undefined && !key.startsWith(`${tab}|`)) continue;
+    c.abort();
+    inflight.delete(key);
+  }
 }
 
-async function react(currentVideoId: string, personality: string, frequency: string): Promise<ReactionProposal[]> {
+async function react(tab: TabKey, currentVideoId: string, personality: string, frequency: string): Promise<ReactionProposal[]> {
   const res = await postJson<ReactResponse>(
     '/scrollmate/react',
     { memory, personality, frequency, currentVideoId },
     REACT_TIMEOUT_MS,
-    `react:${currentVideoId}`,
+    `${tab}|react:${currentVideoId}`,
   );
   return Array.isArray(res.reactions) ? res.reactions : [];
 }
@@ -212,8 +218,12 @@ async function capture(windowId: number, rect: Rect, viewport: { w: number; h: n
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // Usually "activeTab permission not in effect": avoid flickering the character for nothing.
-    if (/permission|activeTab|all_urls/i.test(msg)) captureBlockedUntil = Date.now() + 30_000;
-    console.warn(LOG, 'captureVisibleTab failed:', msg);
+    // That is the normal state until the toolbar icon is clicked (frames come from the video canvas instead),
+    // so it is logged as information, not as a warning in the extension's Errors list.
+    if (/permission|activeTab|all_urls/i.test(msg)) {
+      captureBlockedUntil = Date.now() + 30_000;
+      console.info(LOG, 'screen capture not allowed in this tab yet (click the toolbar icon); using the video canvas');
+    } else console.warn(LOG, 'captureVisibleTab failed:', msg);
     return { ok: false, error: msg };
   }
 }
@@ -222,6 +232,7 @@ async function capture(windowId: number, rect: Rect, viewport: { w: number; h: n
 
 async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
   await ready;
+  const tab = tabKey(sender);
   switch (msg.type) {
     case 'CAPTURE_FRAME': {
       const windowId = sender.tab?.windowId;
@@ -243,7 +254,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
           '/scrollmate/swipe',
           { videoId: msg.videoId, title: msg.title, channel: msg.channel, memory, personality: msg.personality, frequency: msg.frequency },
           SWIPE_TIMEOUT_MS,
-          `swipe:${msg.videoId}`,
+          `${tab}|swipe:${msg.videoId}`,
         );
         return res;
       } catch (e) {
@@ -270,7 +281,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
             viewerFeeling: msg.viewerFeeling ?? null,
           },
           OBSERVE_TIMEOUT_MS,
-          `observe:${msg.videoId}`,
+          `${tab}|observe:${msg.videoId}`,
         );
         if (res.record && res.record.topic !== 'unknown') {
           const rec = { ...res.record, secondsWatched: Math.round(msg.frameTime), skipped: false };
@@ -327,7 +338,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
               captions: msg.captions.slice(0, 20),
             },
             ANALYSE_TIMEOUT_MS,
-            `analyse:${msg.videoId}`,
+            `${tab}|analyse:${msg.videoId}`,
           );
           analysisCache.set(msg.videoId, analysis);
         }
@@ -335,7 +346,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
         remember(toRecord(analysis, msg.secondsWatched));
         // Thin understanding: prefer silence to a wrong reaction.
         if (analysis.confidence < 0.35 || analysis.understandingLevel === 'none') return out;
-        out.reactions = await react(msg.videoId, msg.personality, msg.frequency);
+        out.reactions = await react(tab, msg.videoId, msg.personality, msg.frequency);
         if (activeVideoId !== msg.videoId) console.log(LOG, 'user left', msg.videoId, '- planner will drop non-callbacks');
       } catch (e) {
         out.error = e instanceof Error ? e.message : String(e);
@@ -357,7 +368,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
             title: msg.title, videoSummary: record?.summary.slice(0, 600) ?? '',
             previousComments: (msg.previousComments ?? []).slice(-5),
             personality: msg.personality, frequency: msg.frequency },
-          8_000, `comment:${sender.tab?.id ?? 'stage'}:${msg.requestId}`,
+          8_000, `${tab}|comment:${msg.requestId}`,
         );
       } catch (e) {
         return { ...empty, error: e instanceof Error ? e.message : String(e) };
@@ -371,14 +382,14 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
           '/scrollmate/feeling',
           { videoId: msg.videoId, expression: msg.expression, title: msg.title.slice(0, 300),
             videoSummary: record?.summary.slice(0, 600) ?? '', personality: msg.personality },
-          5_000, `feeling:${sender.tab?.id ?? 'stage'}`,
+          5_000, `${tab}|feeling`,
         );
       } catch (e) {
         return { line: null, emotion: null, error: e instanceof Error ? e.message : String(e) } satisfies FeelingLineResponse;
       }
     }
     case 'CANCEL_COMMENT': {
-      const key = `comment:${sender.tab?.id ?? 'stage'}:${msg.requestId}`;
+      const key = `${tab}|comment:${msg.requestId}`;
       inflight.get(key)?.abort();
       inflight.delete(key);
       return { ok: true };
@@ -399,7 +410,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
             viewerFeeling: msg.viewerFeeling ?? null,
           },
           CAPTION_TIMEOUT_MS,
-          `caption:${msg.videoId}`,
+          `${tab}|caption:${msg.videoId}`,
         );
         return { emotion: res.emotion ?? null, reactions: Array.isArray(res.reactions) ? res.reactions : [] } satisfies CaptionReactResponse;
       } catch (e) {
@@ -408,7 +419,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
     }
     case 'REACT_ONLY': {
       try {
-        return { reactions: await react(msg.currentVideoId, msg.personality, msg.frequency) } satisfies ReactResponse;
+        return { reactions: await react(tab, msg.currentVideoId, msg.personality, msg.frequency) } satisfies ReactResponse;
       } catch (e) {
         return { reactions: [], error: e instanceof Error ? e.message : String(e) } satisfies ReactResponse;
       }
@@ -416,7 +427,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
     case 'GET_MEMORY':
       return { memory };
     case 'CLEAR_MEMORY':
-      abortAll();
+      abortAll(tab); // memory is shared, but another tab's requests are its own
       // also forget today's journal on the backend (earlier Shorts, the child's feelings, Mochi's lines)
       postJson('/scrollmate/journal/clear', {}, 3_000).catch(() => undefined);
       memory = [];
@@ -425,7 +436,7 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
       saveMemory();
       return { ok: true };
     case 'CANCEL_ALL':
-      abortAll();
+      abortAll(tab);
       return { ok: true };
     case 'TELEMETRY':
       queueTelemetry(msg.event);
@@ -439,20 +450,9 @@ async function handle(msg: BgRequest, sender: chrome.runtime.MessageSender): Pro
 // ---------- webcam (opt-in): hidden offscreen page runs MediaPipe; we relay its tiny signals ----------
 let camTabId: number | null = null;
 let camWanted = false;
-let gazeWanted = false; // eye tracking on (the content script re-sends this on every camera start)
 let micWanted = false;
 let creatingMedia: Promise<void> | null = null;
 let talkTurn: { tabId: number; context: TalkContext } | null = null;
-
-async function gazeConfig(): Promise<GazeConfig> {
-  const got = await chrome.storage.local.get(GAZE_MODEL_KEY).catch(() => ({}) as Record<string, unknown>);
-  return { enabled: gazeWanted, model: (got[GAZE_MODEL_KEY] as GazeModelData | undefined) ?? null };
-}
-
-async function pushGazeConfig() {
-  const config = await gazeConfig();
-  chrome.runtime.sendMessage({ target: 'offscreen', type: 'GAZE_CONFIG', config }).catch(() => undefined);
-}
 
 async function hasOffscreen(): Promise<boolean> {
   try {
@@ -560,26 +560,8 @@ async function handleCamera(msg: BgRequest, sender: chrome.runtime.MessageSender
     case 'CAMERA_START':
       camTabId = sender.tab?.id ?? camTabId;
       camWanted = true;
-      gazeWanted = !!msg.gaze;
-      if (await hasOffscreen()) { await pushGazeConfig(); await sendMedia('CAMERA_START').catch(() => undefined); }
-      else await ensureCameraPage(); // it asks for the gaze config when it starts
-      return { ok: true };
-    case 'GAZE_ENABLE':
-      gazeWanted = msg.enabled;
-      await pushGazeConfig();
-      return { ok: true };
-    case 'GAZE_GET_CONFIG':
-      return gazeConfig();
-    case 'GAZE':
-      toCamTab(msg);
-      return { ok: true };
-    case 'GAZE_MODEL_SAVED':
-      await pushGazeConfig();
-      toCamTab({ type: 'GAZE_CALIBRATED' });
-      return { ok: true };
-    case 'OPEN_GAZE_CALIBRATION':
-      camTabId = sender.tab?.id ?? camTabId;
-      await chrome.tabs.create({ url: chrome.runtime.getURL('gaze-calibrate.html') });
+      if (await hasOffscreen()) { await sendMedia('CAMERA_START').catch(() => undefined); }
+      else await ensureCameraPage();
       return { ok: true };
     case 'CAMERA_STOP':
       camWanted = false;
@@ -610,7 +592,6 @@ async function handleCamera(msg: BgRequest, sender: chrome.runtime.MessageSender
 const CAMERA_TYPES = new Set([
   'MEDIA_READY',
   'CAMERA_START', 'CAMERA_STOP', 'USER_SIGNAL', 'CAMERA_STATUS', 'CAMERA_PERMISSION_GRANTED',
-  'GAZE_ENABLE', 'GAZE_GET_CONFIG', 'GAZE', 'GAZE_MODEL_SAVED', 'OPEN_GAZE_CALIBRATION',
 ]);
 
 chrome.tabs.onRemoved.addListener((tabId) => { if (talkTurn?.tabId === tabId) void cancelTalk(); });
@@ -669,3 +650,6 @@ chrome.action.onClicked.addListener(async (tab) => {
 
 // keep the badge right after a browser restart or an extension update
 void isHidden().then(showBadge);
+
+// Remove the retired calibration data left by earlier extension versions.
+void chrome.storage.local.remove('scrollmate.gazeModel').catch(() => undefined);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  commentsSpot, GAZE_COMMENTS_MS, PACE_PX, PARK_AFTER_DRAG_MS, pickStep, RoamPlanner, roamArea, STEP_PX, TOP_BAR, walkMs,
+  PACE_PX, PARK_AFTER_DRAG_MS, pickStep, RoamPlanner, roamArea, STEP_PX, TOP_BAR, walkMs,
   type RoamInput,
 } from '../src/content/roam';
 
@@ -16,7 +16,7 @@ const comments = { x: 1000, y: 70, width: 480, height: 780 };
 
 const base = (over: Partial<RoamInput> = {}): RoamInput => ({
   now: 0, enabled: true, reducedMotion: false, hold: false, mood: 'watching', pos: { x: 850, y: 200 },
-  rects: { video, comments }, area, size, gazeZone: null, gazeY: null, ...over,
+  rects: { video, comments }, area, size, ...over,
 });
 
 test('area: on screen and below the top bar', () => {
@@ -49,12 +49,6 @@ test('step time: a slow shuffle (~30 px/s, at least 0.6 s)', () => {
   assert.equal(walkMs({ x: 0, y: 0 }, { x: 400, y: 0 }, 200), 2000);
 });
 
-test('comments spot: at the panel left edge, at your gaze height', () => {
-  const p = commentsSpot(comments, 500, size, area);
-  assert.ok(p.x < comments.x && p.x + size > comments.x);
-  assert.equal(p.y, 500 - size / 2);
-});
-
 test('planner: holds still for a bubble/drag/visit, sleep, reduced motion, roam off', () => {
   for (const over of [{ hold: true }, { mood: 'sleeping' }, { reducedMotion: true }, { enabled: false }]) {
     const pl = new RoamPlanner(() => 0.9);
@@ -78,13 +72,3 @@ test('planner: a reaction does not send it walking (small steps only)', () => {
   assert.ok(!s || (s.why === 'step' && Math.abs(s.target.x - 850) <= STEP_PX[1]));
 });
 
-test('planner: reading the comments for 2 s brings it over, then it stays', () => {
-  const pl = new RoamPlanner(() => 0.9);
-  pl.park(-PARK_AFTER_DRAG_MS);
-  const t0 = 1000;
-  pl.tick(base({ now: t0, gazeZone: 'comments', gazeY: 400 }));
-  let step = null;
-  for (let t = t0; t < t0 + 15_000 && step?.why !== 'comments'; t += 250) step = pl.tick(base({ now: t, gazeZone: 'comments', gazeY: 400 }));
-  assert.equal(step?.why, 'comments');
-  assert.equal(pl.tick(base({ now: t0 + 30_000, gazeZone: 'comments', gazeY: 400, pos: step!.target })), null, 'stays while you read');
-});

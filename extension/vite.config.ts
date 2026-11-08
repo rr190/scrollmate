@@ -42,7 +42,6 @@ export default defineConfig(({ mode }) => {
           stage: resolve(__dirname, 'stage.html'),
           cameraOffscreen: resolve(__dirname, 'camera-offscreen.html'), // webcam + MediaPipe (hidden)
           cameraSetup: resolve(__dirname, 'camera-setup.html'), // one-time camera permission
-          gazeCalibrate: resolve(__dirname, 'gaze-calibrate.html'), // eye-tracking calibration (opt-in)
         },
       },
     },

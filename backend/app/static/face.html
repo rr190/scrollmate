@@ -28,27 +28,6 @@
   button { border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 700; cursor: pointer; }
   button.ghost { background: var(--panel); color: var(--ink); border-color: var(--line); }
   button.small { padding: 4px 10px; font-size: 12.5px; }
-    /* Eye Control demo: big, calm, high-contrast edge buttons with a dwell ring */
-  .ec-btn { position: fixed; z-index: 40; display: none; flex-direction: column; align-items: center; gap: 6px; width: 150px;
-    padding: 14px 10px 12px; border-radius: 28px; border: 3px solid rgba(255,255,255,.55); background: rgba(30,22,48,.72); color: #fff;
-    font: 700 20px/1.2 system-ui, sans-serif; box-shadow: 0 8px 28px rgba(0,0,0,.35); transition: transform .2s, background .2s, border-color .2s; }
-  body.ec-on .ec-btn { display: flex; }
-  .ec-right { right: 16px; top: 50%; translate: 0 -50%; }
-  .ec-left { left: 16px; top: 50%; translate: 0 -50%; }
-  .ec-top { left: 50%; top: 16px; translate: -50% 0; width: 190px; }
-  .ec-btn.glow { background: rgba(124,92,224,.92); border-color: #ffd23f; transform: scale(1.08); }
-  .ec-btn.chosen { background: rgba(31,157,85,.95); border-color: #fff; }
-  .ec-btn svg { width: 78px; height: 78px; }
-  .ec-track { fill: rgba(255,255,255,.12); stroke: rgba(255,255,255,.35); stroke-width: 6; }
-  .ec-fill { fill: none; stroke: #ffd23f; stroke-width: 7; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 36px 36px; transition: stroke-dashoffset .12s linear; }
-  .ec-emoji { font-size: 26px; fill: #fff; }
-  .ec-short { position: relative; height: 220px; border-radius: 14px; display: grid; place-items: center; text-align: center; color: #fff;
-    font: 700 22px/1.3 system-ui, sans-serif; transition: background .4s; overflow: hidden; }
-  .ec-short small { display: block; font-size: 13px; font-weight: 500; opacity: .85; }
-  .ec-short .paused { position: absolute; inset: 0; display: none; place-items: center; background: rgba(0,0,0,.45); font-size: 48px; }
-  .ec-short.is-paused .paused { display: grid; }
-  .ec-bubble { min-height: 44px; margin-top: 10px; padding: 10px 14px; border-radius: 14px; background: var(--accent-soft); font-weight: 600; }
-  @media (prefers-reduced-motion: reduce) { .ec-btn, .ec-short { transition: none; } .ec-btn.glow { transform: none; } }
   button:disabled { opacity: .55; cursor: not-allowed; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
   .cam { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 10px; overflow: hidden; margin-top: 12px; }
@@ -81,28 +60,11 @@
   th { color: var(--muted); font-weight: 600; }
   .err { color: var(--bad); font-weight: 600; margin-top: 8px; }
   .wide { grid-column: 1 / -1; }
-  /* eye tracking */
-  .gaze-wrap { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-  @media (max-width: 720px) { .gaze-wrap { grid-template-columns: 1fr; } }
-  .screen { position: relative; width: 100%; aspect-ratio: 16 / 10; border-radius: 10px; background: var(--code); border: 1px solid var(--line); overflow: hidden; }
-  .screen .cell { position: absolute; border: 1px dashed var(--line); display: grid; place-items: center; font-size: 11px; color: var(--muted); }
-  .screen .cell.hot { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
-  .gdot { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: #ff4f7b;
-    box-shadow: 0 0 0 4px rgba(255, 79, 123, .25); transition: left .06s linear, top .06s linear; pointer-events: none; }
-  #pageDot { position: fixed; z-index: 50; display: none; }
-  #calib { position: fixed; inset: 0; z-index: 100; background: rgba(12, 9, 18, .92); display: none; color: #fff; }
-  #calib .msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, 70px); text-align: center; font-size: 15px; max-width: 420px; padding: 0 16px; }
-  #calib .target { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; background: #ffd23f; transition: background .15s;
-    box-shadow: 0 0 0 6px rgba(255, 210, 63, .25); }
-  #calib .tdot { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; background: #2fd36b; }
-  #calib .tdot.gaze { width: 20px; height: 20px; margin: -10px 0 0 -10px; background: #3b82f6; }
-  #calib .target.collect { background: #4cd18b; box-shadow: 0 0 0 6px rgba(76, 209, 139, .3); }
-  #calib .target::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: #111; }
 </style>
 </head>
 <body>
 <header>
-  <h1>📷 Webcam expression &amp; eye tracking test</h1>
+  <h1>📷 Webcam expression test</h1>
   <span class="k" id="status">Camera off</span>
   <span style="flex:1"></span>
   <a href="/ui">← Backend playground</a>
@@ -157,86 +119,11 @@
     <table><thead><tr><th>Time</th><th>Expression</th><th>Face</th><th>Looking</th><th>Strength</th></tr></thead><tbody id="log"></tbody></table>
   </section>
 
-  <section class="wide">
-    <h2>👀 Eye tracking <span class="k" id="gStatus" style="font-weight:400">not calibrated: rough estimate</span></h2>
-    <div class="gaze-wrap">
-      <div>
-        <div class="screen" id="screen"><div class="gdot" id="gdot" hidden></div></div>
-        <div class="row">
-          <select id="gMode" aria-label="Calibration points" style="padding:7px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit">
-            <option value="nine">9 dots (12 with bottom boost, ~25 s)</option>
-            <option value="dense">25 dots (~50 s, more accurate)</option>
-          </select>
-          <button id="calibrate" disabled>Calibrate</button>
-          <button id="tune" class="ghost" disabled title="EyeTrax KalmanSmoother.tune: 3 dots, sets the smoothing from how much your gaze jitters">Fine-tune smoothing (3 dots)</button>
-          <button id="uncal" class="ghost" disabled>Clear calibration</button>
-          <label class="k" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pageDotOn"> show my gaze over this whole page</label>
-        </div>
-        <div class="row">
-          <label class="k" style="display:flex;align-items:center;gap:6px">Smoothing
-            <select id="gFilter" style="padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit">
-              <option value="kalman_ema" selected>Kalman + EMA 0.25</option>
-              <option value="kalman">Kalman</option>
-              <option value="none">None</option>
-            </select></label>
-          <label class="k" style="display:flex;align-items:center;gap:6px" title="Not in EyeTrax: MediaPipe normalises x and y separately; this rescales x by the video's width/height. Re-calibrate after changing."><input type="checkbox" id="gAspect"> correct for camera aspect ratio (extra, not in EyeTrax)</label>
-          <label class="k" style="display:flex;align-items:center;gap:6px" title="Not in EyeTrax. Looking down droops your eyelids: EyeTrax's blink rule then throws those frames away and the iris is half hidden. This adds MediaPipe's eye-direction scores as features, only skips real blinks, and adds 3 extra low calibration dots (9-dot mode). Re-calibrate after changing."><input type="checkbox" id="gBoost" checked> bottom-of-screen boost (extra, not in EyeTrax)</label>
-        </div>
-        <div class="k" style="margin-top:8px">Same method as <a href="https://github.com/ck-zhang/EyeTrax" target="_blank" rel="noopener">EyeTrax</a> (MIT): its 161 eye/face landmarks (486 values) in a head-centred frame, StandardScaler + Ridge(alpha 1), 9-dot calibration, blink rejection, Kalman / Kalman+EMA and its 3-dot fine-tune, at ~30 fps. Keep your head still and your face evenly lit; re-calibrate if you move your laptop or chair.</div>
-      </div>
-      <dl>
-        <dt>Looking at</dt><dd id="gRegion">—</dd>
-        <dt>Screen point</dt><dd id="gPoint">—</dd>
-        <dt>Iris in eye (x, y)</dt><dd id="gIris">—</dd>
-        <dt>Eyes</dt><dd id="gBlink">—</dd>
-        <dt>Calibration error</dt><dd id="gErr">—</dd>
-        <dt>Smoothing tune</dt><dd id="gTune">—</dd>
-        <dt>Accuracy to expect</dt><dd>Webcam gaze is still coarse after calibration: reliable for regions (video vs comments, left / centre / right), not individual words.</dd>
-      </dl>
-    </div>
-  </section>
-  <section class="wide">
-    <h2>🎯 Eye Control <span class="k" style="font-weight:400">hands-free demo, for kids who can't easily use a mouse or touch screen</span></h2>
-    <div class="gaze-wrap">
-      <div>
-        <div class="ec-short" id="ecShort"><div><span id="ecShortTitle">Short 1 of 5</span><small id="ecShortSub"></small></div><div class="paused">⏸</div></div>
-        <div class="ec-bubble" id="ecBubble">🍡 Buddy: Look at a big button until its ring fills.</div>
-        <div class="row">
-          <button id="ecStart" disabled>Start Eye Control</button>
-          <label class="k" style="display:flex;align-items:center;gap:6px">Look time
-            <select id="ecDwell" style="padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit">
-              <option value="1000">Fast 1 s</option><option value="1500" selected>Normal 1.5 s</option><option value="2500">Slow 2.5 s</option>
-            </select></label>
-        </div>
-        <div class="k" style="margin-top:8px">Three big buttons appear on the screen edges: <b>▶ Next</b> (right), <b>⏸ Pause / Play</b> (left) and
-          <b>💬 Talk to Mochi</b> (top). Look at one until its ring fills, or blink long (½–2 s) to choose the glowing one. Works without calibration
-          (rough eye + head direction); calibrating above makes it more accurate. 2 s pause after each choice, only safe actions, looking down does nothing.</div>
-      </div>
-      <dl>
-        <dt>Mode</dt><dd id="ecMode">off</dd>
-        <dt>Glowing</dt><dd id="ecTarget">—</dd>
-        <dt>Choices</dt><dd><ol id="ecLog" style="margin:0;padding-left:18px"></ol></dd>
-      </dl>
-    </div>
-  </section>
 </main>
-
-<button class="ec-btn ec-right" data-ec="next" aria-label="Next"><svg viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" class="ec-track"/><circle cx="36" cy="36" r="30" class="ec-fill"/><text x="36" y="44" text-anchor="middle" class="ec-emoji">▶</text></svg><span>Next</span></button>
-<button class="ec-btn ec-left" data-ec="pause" aria-label="Pause"><svg viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" class="ec-track"/><circle cx="36" cy="36" r="30" class="ec-fill"/><text x="36" y="44" text-anchor="middle" class="ec-emoji">⏸</text></svg><span>Pause</span></button>
-<button class="ec-btn ec-top" data-ec="talk" aria-label="Talk to Mochi"><svg viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="30" class="ec-track"/><circle cx="36" cy="36" r="30" class="ec-fill"/><text x="36" y="44" text-anchor="middle" class="ec-emoji">💬</text></svg><span>Talk to Mochi</span></button>
-
-<div class="gdot" id="pageDot"></div>
-<div id="calib"><div class="target" id="ctarget"></div><div class="msg" id="cmsg"></div></div>
 
 <script type="module">
 import { FaceLandmarker, FilesetResolver, DrawingUtils } from '/ui/mediapipe/vision_bundle.mjs';
-import {
-  FaceSignalTracker, headAngles, features, THRESHOLDS as T,
-  irisPosition, uncalibratedGaze, GazeSmoother,
-  gazeFeatureVector, eyeAspectRatio, BlinkDetector, RidgeGaze, KalmanGaze, ninePointTargets, denseTargets,
-  fineTuneTargets, FINE_TUNE, varianceOf,
-  gazeFeatureVectorPlus, isRealBlink, bottomHeavyTargets,
-} from '/ui/mediapipe/faceSignals.js';
+import { FaceSignalTracker, headAngles, features, THRESHOLDS as T } from '/ui/mediapipe/faceSignals.js';
 
 const $ = (id) => document.getElementById(id);
 const EMOJI = { neutral: '😐', happy: '😊', laughing: '😂', surprised: '😮', sad: '😢', disgusted: '🤢', scared: '😨', angry: '😠', confused: '🤨' };
@@ -272,29 +159,6 @@ let tracker = new FaceSignalTracker();
 let frames = 0, fpsAt = performance.now();
 const video = $('video'), canvas = $('overlay'), ctx = canvas.getContext('2d');
 
-// ---------- gaze state ----------
-// EyeTrax-style: head-frame eye landmarks -> standardised ridge -> Kalman(+EMA); blinks ignored.
-const model = new RidgeGaze();
-const filters = { kalman: new KalmanGaze(50, 0.2, 0), kalman_ema: new KalmanGaze(50, 0.2, 0.25) }; // EyeTrax defaults
-const kalman = { // facade over the selected EyeTrax filter
-  step: (p) => ($('gFilter').value === 'none' ? p : filters[$('gFilter').value].step(p)),
-  reset: () => Object.values(filters).forEach((f) => f.reset()),
-  setMeasurementNoise: (x, y) => Object.values(filters).forEach((f) => f.setMeasurementNoise(x, y)),
-};
-let tuning = null; // EyeTrax fine-tune state
-const blink = new BlinkDetector();
-const rough = new GazeSmoother(0.3); // before calibration: simple iris estimate
-let calibSize = { w: window.innerWidth, h: window.innerHeight }; // pixels the model was trained in
-let samples = { X: [], Y: [] };
-let collecting = null; // { target(px), sampling } while a calibration dot is shown
-let lastFrame = { face: false, blink: false };
-let lastGaze = null;
-
-// screen map grid (3x3 regions)
-const COLS = ['left', 'centre', 'right'], ROWS = ['top', 'middle', 'bottom'];
-$('screen').insertAdjacentHTML('afterbegin', ROWS.flatMap((r, ri) => COLS.map((c, ci) =>
-  `<div class="cell" id="cell-${ri}-${ci}" style="left:${ci * 33.333}%;top:${ri * 33.333}%;width:33.333%;height:33.333%">${r} ${c}</div>`)).join(''));
-
 async function start() {
   $('err').hidden = true;
   $('start').disabled = true;
@@ -322,10 +186,9 @@ async function start() {
   }
   drawer = new DrawingUtils(ctx);
   tracker = new FaceSignalTracker();
-  rough.reset(); kalman.reset();
   $('status').textContent = 'Camera on (on this computer only)';
-  for (const id of ['stop', 'relearn', 'calibrate', 'ecStart']) $(id).disabled = false;
-  timer = setInterval(step, 33); // ~30 fps: EyeTrax reads every camera frame (~30 samples per calibration dot)
+  for (const id of ['stop', 'relearn']) $(id).disabled = false;
+  timer = setInterval(step, 100); // Expressions are processed locally at about 10 fps.
 }
 
 function stop() {
@@ -336,10 +199,7 @@ function stop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   $('empty').hidden = false;
   $('start').disabled = false;
-  for (const id of ['stop', 'relearn', 'calibrate', 'ecStart']) $(id).disabled = true;
-  ecToggle(false);
-  $('gdot').hidden = true;
-  $('pageDot').style.display = 'none';
+  for (const id of ['stop', 'relearn']) $(id).disabled = true;
   $('status').textContent = 'Camera off';
 }
 
@@ -372,12 +232,9 @@ function step() {
       drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW, { color: '#ffd23f', lineWidth: 1.5 });
       drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LEFT_EYE, { color: '#8be9ff', lineWidth: 1.5 });
       drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE, { color: '#8be9ff', lineWidth: 1.5 });
-      drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS, { color: '#4cd18b', lineWidth: 2 });
-      drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS, { color: '#4cd18b', lineWidth: 2 });
     }
   }
 
-  ecBlink(b); // Eye Control: long blink (checked before the blink-skip below)
 
   // expressions (exactly what the extension uses)
   const changed = tracker.update({ blendshapes: b, ...angles }, now);
@@ -386,36 +243,6 @@ function step() {
   $('yaw').textContent = b ? `${angles.yawDeg.toFixed(0)}°` : '—';
   $('pitch').textContent = b ? `${angles.pitchDeg.toFixed(0)}°` : '—';
 
-  // eye tracking
-  // EyeTrax uses MediaPipe's normalised coordinates as-is (aspect 1); the checkbox adds an aspect fix.
-  const aspect = $('gAspect').checked ? video.videoWidth / video.videoHeight || 4 / 3 : 1;
-  const iris = irisPosition(lm);
-  // "Bottom boost" (not in EyeTrax): + eye-direction blendshapes, and a blink must also close the lids
-  const boost = $('gBoost').checked;
-  const fv = boost ? gazeFeatureVectorPlus(lm, b, aspect) : gazeFeatureVector(lm, aspect);
-  const ear = eyeAspectRatio(lm, aspect);
-  const earBlink = ear !== null && blink.update(ear);
-  const blinking = boost ? isRealBlink(earBlink, b) : earBlink;
-  lastFrame = { face: !!fv, blink: blinking };
-  $('gBlink').textContent = !fv ? 'no face' : blinking ? 'blinking (frame ignored)' : `open (EAR ${ear.toFixed(2)})${earBlink ? ' · lids low (looking down), kept' : ''}`;
-  if (!fv || !iris) { $('gdot').hidden = true; $('pageDot').style.display = 'none'; $('gRegion').textContent = 'no face'; return; }
-  if (collecting && collecting.sampling && !blinking) {
-    samples.X.push(fv);
-    samples.Y.push(collecting.target);
-  }
-  if (blinking) return; // hold the last point through a blink
-  let g;
-  if (model.trained) {
-    const px = model.predict(fv);
-    if (tuning) tuneStep(px);
-    const k = kalman.step(px);
-    g = { x: k.x / calibSize.w, y: k.y / calibSize.h };
-  } else {
-    g = rough.push(uncalibratedGaze(iris, angles.yawDeg, angles.pitchDeg));
-  }
-  lastGaze = g;
-  renderGaze(g, iris);
-  ecGaze(g);
 }
 
 function renderBars(b) {
@@ -452,271 +279,9 @@ function renderExpression(changed) {
   }
 }
 
-function renderGaze(g, iris) {
-  const off = g.x < -0.02 || g.x > 1.02 || g.y < -0.02 || g.y > 1.02;
-  const cx = Math.max(0, Math.min(2, Math.floor(g.x * 3))), cy = Math.max(0, Math.min(2, Math.floor(g.y * 3)));
-  document.querySelectorAll('#screen .cell').forEach((c) => c.classList.remove('hot'));
-  if (!off) $(`cell-${cy}-${cx}`).classList.add('hot');
-  $('gRegion').textContent = off ? 'off the screen' : `${ROWS[cy]} ${COLS[cx]}`;
-  $('gPoint').textContent = `x ${(g.x * 100).toFixed(0)}%, y ${(g.y * 100).toFixed(0)}%`;
-  $('gIris').textContent = `${iris.x.toFixed(2)}, ${iris.y.toFixed(2)}`;
-  const dot = $('gdot');
-  dot.hidden = false;
-  dot.style.left = `${Math.max(0, Math.min(1, g.x)) * 100}%`;
-  dot.style.top = `${Math.max(0, Math.min(1, g.y)) * 100}%`;
-  const pd = $('pageDot');
-  if ($('pageDotOn').checked && !collecting) {
-    pd.style.display = 'block';
-    pd.style.left = `${Math.max(0, Math.min(1, g.x)) * window.innerWidth}px`;
-    pd.style.top = `${Math.max(0, Math.min(1, g.y)) * window.innerHeight}px`;
-  } else pd.style.display = 'none';
-}
-
-// ---------- calibration (EyeTrax procedure): wait for a steady face, then per dot 1 s pulse + 1 s capture ----------
-async function calibrate() {
-  const overlay = $('calib'), target = $('ctarget'), msg = $('cmsg');
-  const dense = $('gMode').value === 'dense';
-  const pts = dense ? denseTargets(5, 0.1) : $('gBoost').checked ? bottomHeavyTargets(0.1) : ninePointTargets(0.1);
-  const pulseMs = dense ? 900 : 1000, captureMs = dense ? 900 : 1000;
-  let cancelled = false;
-  const onKey = (e) => { if (e.key === 'Escape') cancelled = true; };
-  window.addEventListener('keydown', onKey);
-  overlay.style.display = 'block';
-  try { await document.documentElement.requestFullscreen?.(); } catch { /* optional */ }
-  await wait(300);
-  calibSize = { w: window.innerWidth, h: window.innerHeight };
-  samples = { X: [], Y: [] };
-  // 1) steady face for 2 s (face visible, not blinking)
-  target.style.left = '50%'; target.style.top = '50%'; target.classList.remove('collect');
-  msg.style.top = '50%';
-  let steadySince = null;
-  while (!cancelled && stream) {
-    const ok = lastFrame.face && !lastFrame.blink;
-    steadySince = ok ? (steadySince ?? performance.now()) : null;
-    const held = steadySince ? (performance.now() - steadySince) / 2000 : 0;
-    msg.textContent = ok ? `Hold still… ${Math.ceil((1 - held) * 2)}` : 'Face not detected: sit facing the camera';
-    if (held >= 1) break;
-    await wait(50);
-  }
-  msg.textContent = 'Follow the dot with your eyes, keep your head still. Esc to cancel.';
-  // 2) dots: pulse (eyes land, ignored) then capture
-  for (const p of pts) {
-    if (cancelled || !stream) break;
-    const px = { x: p.x * calibSize.w, y: p.y * calibSize.h };
-    target.style.left = `${px.x}px`; target.style.top = `${px.y}px`;
-    msg.style.top = p.y > 0.6 ? '20%' : '50%';
-    target.classList.remove('collect');
-    collecting = { target: px, sampling: false };
-    const t0 = performance.now();
-    while (performance.now() - t0 < pulseMs) { // pulsing ring, like EyeTrax
-      const e = (performance.now() - t0) / 1000;
-      target.style.transform = `scale(${1 + 0.5 * Math.abs(Math.sin(2 * Math.PI * e))})`;
-      await wait(16);
-    }
-    target.style.transform = '';
-    target.classList.add('collect');
-    collecting.sampling = true;
-    await wait(captureMs);
-    collecting = null;
-  }
-  window.removeEventListener('keydown', onKey);
-  overlay.style.display = 'none';
-  if (document.fullscreenElement) document.exitFullscreen?.();
-  if (cancelled) { $('gStatus').textContent = 'calibration cancelled'; return; }
-  // 3) fit ridge (alpha 1) and set the Kalman measurement noise from the model's own residuals
-  if (!model.fit(samples.X, samples.Y, 1.0)) { $('gStatus').textContent = 'calibration failed (too few frames: face visible?)'; return; }
-  let ex = 0, ey = 0, err = 0;
-  samples.X.forEach((f, i) => {
-    const q = model.predict(f), t = samples.Y[i];
-    ex += (q.x - t.x) ** 2; ey += (q.y - t.y) ** 2; err += Math.hypot(q.x - t.x, q.y - t.y);
-  });
-  const n = samples.X.length;
-  kalman.setMeasurementNoise(0.2, 0.2); // EyeTrax default until "Fine-tune smoothing" (tune) is run
-  kalman.reset();
-  const diag = Math.hypot(calibSize.w, calibSize.h);
-  $('gErr').textContent = `${Math.round(err / n)} px average (${((err / n / diag) * 100).toFixed(1)}% of the screen diagonal), ${n} frames, ${pts.length} dots`;
-  $('gStatus').textContent = `calibrated with ${pts.length} dots (EyeTrax method)`;
-  $('uncal').disabled = false;
-  $('tune').disabled = false;
-  $('gTune').textContent = 'not tuned (Kalman measurement noise 0.2: barely smooths)';
-}
-
-// ---------- EyeTrax KalmanSmoother.tune(): 3 dots; look at each until it disappears ----------
-function tune() {
-  if (!model.trained) return;
-  const w = calibSize.w, h = calibSize.h;
-  tuning = {
-    points: fineTuneTargets(w, h).map((pos) => ({ pos, start: null, collecting: false, collStart: null, gaze: [] })),
-    all: [],
-    prox: w * FINE_TUNE.proximityOfWidth,
-  };
-  $('calib').style.display = 'block';
-  $('ctarget').style.display = 'none';
-  $('cmsg').style.top = '86%';
-  $('cmsg').textContent = 'Look at the points until they disappear (Esc to cancel)';
-  drawTune(null);
-  document.documentElement.requestFullscreen?.().catch(() => {});
-}
-
-function tuneStep(px) {
-  const now = performance.now();
-  for (const pt of [...tuning.points]) {
-    if (Math.hypot(px.x - pt.pos.x, px.y - pt.pos.y) <= tuning.prox) {
-      pt.start ??= now;
-      if (!pt.collecting && now - pt.start >= FINE_TUNE.initialDelayMs) { pt.collecting = true; pt.collStart = now; }
-      if (pt.collecting) {
-        pt.gaze.push({ x: Math.round(px.x), y: Math.round(px.y) });
-        if (now - pt.collStart >= FINE_TUNE.collectMs) {
-          tuning.all.push(...pt.gaze);
-          tuning.points.splice(tuning.points.indexOf(pt), 1);
-        }
-      }
-    } else {
-      Object.assign(pt, { start: null, collecting: false, collStart: null, gaze: [] }); // looked away: restart this point
-    }
-  }
-  drawTune(px);
-  if (!tuning.points.length) finishTune();
-}
-
-function drawTune(px) {
-  const layer = $('calib');
-  layer.querySelectorAll('.tdot').forEach((d) => d.remove());
-  const now = performance.now();
-  for (const pt of tuning.points) {
-    let { x, y } = pt.pos;
-    if (pt.collecting) { // EyeTrax "shakes" the dot while collecting
-      const shake = 5 + ((now - pt.collStart) / FINE_TUNE.collectMs) * 20;
-      x += (Math.random() * 2 - 1) * shake; y += (Math.random() * 2 - 1) * shake;
-    }
-    layer.insertAdjacentHTML('beforeend', `<div class="tdot" style="left:${x}px;top:${y}px;${pt.start && !pt.collecting ? 'box-shadow:0 0 0 6px #ffd23f' : ''}"></div>`);
-  }
-  if (px) layer.insertAdjacentHTML('beforeend', `<div class="tdot gaze" style="left:${px.x}px;top:${px.y}px"></div>`);
-}
-
-function finishTune(cancelled = false) {
-  const all = tuning?.all ?? [];
-  tuning = null;
-  $('calib').querySelectorAll('.tdot').forEach((d) => d.remove());
-  $('calib').style.display = 'none';
-  $('ctarget').style.display = '';
-  if (document.fullscreenElement) document.exitFullscreen?.();
-  const v = cancelled ? null : varianceOf(all);
-  if (!v) { $('gTune').textContent = cancelled ? 'fine-tune cancelled' : 'fine-tune needs more gaze samples'; return; }
-  kalman.setMeasurementNoise(v.x, v.y);
-  kalman.reset();
-  $('gTune').textContent = `tuned: measurement noise ${Math.round(Math.sqrt(v.x))} px × ${Math.round(Math.sqrt(v.y))} px (sd), from ${all.length} samples`;
-}
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && tuning) finishTune(true); });
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// ---------- Eye Control demo (dwell select + long blink), self-contained on this page ----------
-const EC = { right: 0.82, left: 0.18, top: 0.15, sticky: 0.05, cooldownMs: 2000, graceMs: 250 };
-const RING = 2 * Math.PI * 30;
-const SHORTS = [
-  { title: 'A puppy meets snow', sub: '🐶❄️', bg: '#4f7cff', line: 'Its little paws keep sinking! 😂' },
-  { title: 'Cat vs. cucumber', sub: '🐱🥒', bg: '#2fa36b', line: 'That jump was HUGE! 😮' },
-  { title: 'Tiny pancake art', sub: '🥞🎨', bg: '#e08a2e', line: 'I want to eat that one 😋' },
-  { title: 'Bubble science', sub: '🫧🔬', bg: '#8a5ce0', line: 'A bubble inside a bubble?! 🤩' },
-  { title: 'Goat on a trampoline', sub: '🐐🤸', bg: '#d94f7a', line: 'Boing boing boing! 😆' },
-];
-const ec = { on: false, target: null, start: 0, lostAt: null, cooldownUntil: 0, closedAt: null, index: 0, paused: false };
-
-function ecTargetFor(p) {
-  const m = (t) => (t === ec.target ? EC.sticky : 0);
-  if (p.x > EC.right - m('next')) return 'next';
-  if (p.x < EC.left + m('pause')) return 'pause';
-  if (p.y < EC.top + m('talk') && p.x > 1 / 3 - m('talk') && p.x < 2 / 3 + m('talk')) return 'talk';
-  return null;
-}
-
-function ecRender(progress = 0) {
-  document.querySelectorAll('.ec-btn').forEach((btn) => {
-    const glowing = btn.dataset.ec === ec.target;
-    btn.classList.toggle('glow', glowing);
-    btn.querySelector('.ec-fill').style.strokeDashoffset = RING * (1 - (glowing ? progress : 0));
-  });
-  const pauseBtn = document.querySelector('[data-ec="pause"]');
-  pauseBtn.querySelector('span').textContent = ec.paused ? 'Play' : 'Pause';
-  pauseBtn.querySelector('.ec-emoji').textContent = ec.paused ? '▶' : '⏸';
-  $('ecTarget').textContent = ec.target ? `${ec.target} (${Math.round(progress * 100)}%)` : '—';
-}
-
-function ecShowShort() {
-  const sh = SHORTS[ec.index % SHORTS.length];
-  $('ecShort').style.background = sh.bg;
-  $('ecShortTitle').textContent = `Short ${ec.index % SHORTS.length + 1} of ${SHORTS.length}: ${sh.title}`;
-  $('ecShortSub').textContent = sh.sub;
-  $('ecShort').classList.toggle('is-paused', ec.paused);
-}
-
-function ecChoose(target, via) {
-  const now = performance.now();
-  ec.cooldownUntil = now + EC.cooldownMs;
-  const btn = document.querySelector(`[data-ec="${target}"]`);
-  ec.target = null; ec.lostAt = null;
-  btn.classList.add('chosen');
-  setTimeout(() => btn.classList.remove('chosen'), 900);
-  if (target === 'next') { ec.index++; ec.paused = false; $('ecBubble').textContent = '🍡 Buddy: Ooh, a new one! 👉'; }
-  else if (target === 'pause') { ec.paused = !ec.paused; $('ecBubble').textContent = ec.paused ? '🍡 Buddy: Paused! Take your time 😊' : '🍡 Buddy: And we\'re back! ▶'; }
-  else $('ecBubble').textContent = `🍡 Buddy: ${SHORTS[ec.index % SHORTS.length].line}`;
-  ecShowShort();
-  ecRender(0);
-  const how = via === 'blink' ? 'long blink' : via === 'click' ? 'clicked' : `looked ${(+$('ecDwell').value / 1000).toFixed(1)} s`;
-  const li = document.createElement('li');
-  li.textContent = `${new Date().toLocaleTimeString([], { hour12: false })} · ${{ next: '▶ Next', pause: '⏯ Pause / Play', talk: '💬 Talk to Mochi' }[target]} (${how}${model.trained ? '' : ', rough'})`;
-  $('ecLog').prepend(li);
-  while ($('ecLog').children.length > 8) $('ecLog').lastChild.remove();
-}
-
-/** Every gaze point (fraction of the screen). Dwell: the ring fills while you keep looking. */
-function ecGaze(g) {
-  if (!ec.on) return;
-  const now = performance.now();
-  if (now < ec.cooldownUntil) { ec.target = null; ecRender(0); return; }
-  const raw = ecTargetFor(g);
-  if (raw && raw === ec.target) ec.lostAt = null;
-  else if (raw) { ec.target = raw; ec.start = now; ec.lostAt = null; }
-  else if (ec.target) { ec.lostAt ??= now; if (now - ec.lostAt > EC.graceMs) ec.target = null; }
-  if (!ec.target) { ecRender(0); return; }
-  const progress = Math.min(1, (now - ec.start) / +$('ecDwell').value);
-  if (progress >= 1 && ec.lostAt === null) { ecChoose(ec.target, 'dwell'); return; }
-  ecRender(progress);
-}
-
-/** A deliberate long blink (both eyes closed 0.5-2 s) chooses the glowing button. */
-function ecBlink(b) {
-  if (!ec.on) return;
-  const now = performance.now();
-  const closed = !!b && ((b.eyeBlinkLeft ?? 0) + (b.eyeBlinkRight ?? 0)) / 2 > 0.6;
-  if (closed) { ec.closedAt ??= now; return; }
-  if (ec.closedAt === null) return;
-  const held = now - ec.closedAt;
-  ec.closedAt = null;
-  if (held >= 500 && held <= 2000 && ec.target && now >= ec.cooldownUntil) ecChoose(ec.target, 'blink');
-}
-
-function ecToggle(on = !ec.on) {
-  ec.on = on;
-  ec.target = null;
-  document.body.classList.toggle('ec-on', on);
-  $('ecStart').textContent = on ? 'Stop Eye Control' : 'Start Eye Control';
-  $('ecMode').textContent = !on ? 'off' : model.trained ? 'on · calibrated gaze' : 'on · rough gaze (no calibration)';
-  ecRender(0);
-}
-document.querySelectorAll('.ec-btn').forEach((btn) => { btn.onclick = () => ecChoose(btn.dataset.ec, 'click'); });
-$('ecStart').onclick = () => ecToggle();
-ecShowShort();
-
 $('start').onclick = start;
 $('stop').onclick = stop;
 $('relearn').onclick = () => { tracker.baseline.reset(); };
-$('calibrate').onclick = calibrate;
-const uncalibrate = (why) => { model.clear(); kalman.reset(); rough.reset(); $('gStatus').textContent = why; $('gErr').textContent = '—'; $('uncal').disabled = true; $('tune').disabled = true; $('gTune').textContent = '—'; };
-$('uncal').onclick = () => uncalibrate('not calibrated: rough estimate');
-$('gAspect').onchange = () => uncalibrate('aspect setting changed: calibrate again');
-$('gBoost').onchange = () => uncalibrate('bottom boost changed: calibrate again');
-$('tune').onclick = tune;
 </script>
 </body>
 </html>

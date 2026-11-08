@@ -1,5 +1,5 @@
 import type { Emotion } from './emotions';
-import type { GazeModelData, UserSignal } from './faceSignals';
+import type { UserSignal } from './faceSignals';
 import type { Analysis, Frequency, MemoryRecord, Personality, ReactionProposal, Rect } from './types';
 
 /** Messages from content script / stage page to the background worker. */
@@ -47,14 +47,7 @@ export type BgRequest =
   // Mochi kindly notices the child's feeling: only the expression label goes to the backend, never an image
   | { type: 'FEELING_LINE'; videoId: string; expression: string; title: string; personality: Personality }
   // webcam (opt-in, on-device): content -> background, and offscreen camera page -> background
-  | { type: 'CAMERA_START'; gaze?: boolean }
-  // eye tracking (opt-in): content -> background (enable, open calibration); calibration page -> background (saved);
-  // offscreen -> background (ask for config, gaze points as screen fractions)
-  | { type: 'GAZE_ENABLE'; enabled: boolean }
-  | { type: 'OPEN_GAZE_CALIBRATION' }
-  | { type: 'GAZE_MODEL_SAVED' }
-  | { type: 'GAZE_GET_CONFIG' }
-  | { type: 'GAZE'; x: number; y: number; at: number }
+  | { type: 'CAMERA_START' }
   | { type: 'CAMERA_STOP' }
   | { type: 'CAMERA_PERMISSION_GRANTED' }
   | { type: 'USER_SIGNAL'; signal: UserSignal }
@@ -170,11 +163,6 @@ export type TabMessage =
   | { type: 'ACTIVE_TAB_GRANTED' }
   | { type: 'USER_SIGNAL'; signal: UserSignal }
   | { type: 'CAMERA_STATUS'; state: CameraState; detail?: string }
-  | { type: 'GAZE'; x: number; y: number; at: number }
-  | { type: 'GAZE_CALIBRATED' };
-
-/** Background -> offscreen camera page. */
-export interface GazeConfig { enabled: boolean; model: GazeModelData | null }
 
 export function sendBg<T = unknown>(msg: BgRequest): Promise<T> {
   return new Promise((resolve, reject) => {

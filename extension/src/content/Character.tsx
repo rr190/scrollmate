@@ -92,8 +92,7 @@ export function Character({ mood, look: viewerLook = null }: { mood: Mood; look?
             <ellipse cx={70} cy={82} rx={18} ry={9} fill="#fff" opacity={0.95} transform="rotate(-24 70 82)" />
           </g>
 
-          {/* face (gaze offset transitions between moods) */}
-          {/* + eye tracking: the face turns toward where the viewer is looking (straight ahead = eye contact) */}
+          {/* face (offset transitions between moods; while roaming it glances the way it walks) */}
           <g className="sm-face" style={{ transform: `translate(${(look.look?.[0] ?? 0) + (viewerLook?.x ?? 0) * 7}px, ${(look.look?.[1] ?? 0) + (viewerLook?.y ?? 0) * 5}px)` }}>
             <ellipse cx={47} cy={134} rx={10} ry={6} fill="#FF8FB8" className="sm-blush" style={{ opacity: look.blush * 0.8 }} />
             <ellipse cx={153} cy={134} rx={10} ry={6} fill="#FF8FB8" className="sm-blush" style={{ opacity: look.blush * 0.8 }} />

@@ -425,7 +425,7 @@
 .sm-face {
   transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-/* eye tracking: the ScrollMate avatar leans toward where you look */
+/* The character faces the direction of its walking animation. */
 .sm-look {
   display: block;
   width: 100%;

@@ -48,7 +48,7 @@ test('headAngles: identity matrix is straight ahead', () => {
 });
 
 // ---- personal baseline (your resting face) ----
-import { classify as classify2, FaceBaseline, GazeCalibrator, irisPosition, solveLeastSquares, uncalibratedGaze } from '../src/shared/faceSignals';
+import { classify as classify2, FaceBaseline } from '../src/shared/faceSignals';
 
 test('baseline: a resting frown is not "sad"; a real frown on top of it is', () => {
   const rest = { mouthFrownLeft: 0.32, mouthFrownRight: 0.32 }; // many people look like this at rest
@@ -68,38 +68,7 @@ test('baseline: only adapts while the face is neutral, and caps at 0.5', () => {
   assert.equal(b.value.smile, 0.5); // not neutral -> no learning
 });
 
-// ---- eye tracking ----
-test('least squares recovers a known linear map', () => {
-  const X = [[1, 0, 1], [0, 1, 1], [1, 1, 1], [2, 1, 1], [0, 2, 1]];
-  const y = X.map(([a, b]) => 3 * a - 2 * b + 0.5);
-  const w = solveLeastSquares(X, y)!;
-  assert.ok(Math.abs(w[0] - 3) < 1e-6 && Math.abs(w[1] + 2) < 1e-6 && Math.abs(w[2] - 0.5) < 1e-6);
-});
-
-test('gaze calibrator fits 9 targets and predicts a new point', () => {
-  const c = new GazeCalibrator();
-  const featuresFor = (sx: number, sy: number) => [(0.5 - sx) / 4, (sy - 0.45) / 3, 0, 0, 1]; // a synthetic "eye"
-  for (const sx of [0.1, 0.5, 0.9]) for (const sy of [0.1, 0.5, 0.9]) c.add(featuresFor(sx, sy), { x: sx, y: sy });
-  // Head angle columns are all zero here (no head movement): the default ridge keeps the fit solvable.
-  const err = c.fit()!;
-  assert.ok(err !== null && err < 0.02, `calibration error ${err}`);
-  const p = c.predict(featuresFor(0.3, 0.7))!;
-  assert.ok(Math.abs(p.x - 0.3) < 0.02 && Math.abs(p.y - 0.7) < 0.02);
-});
-
-test('iris position: centred iris -> 0.5, 0.5; uncalibrated gaze -> screen centre', () => {
-  const lm = Array.from({ length: 478 }, () => ({ x: 0, y: 0 }));
-  const eye = (a: number, b: number, t: number, d: number, i: number, x0: number) => {
-    lm[a] = { x: x0, y: 0.5 }; lm[b] = { x: x0 + 0.1, y: 0.5 }; lm[t] = { x: x0 + 0.05, y: 0.48 }; lm[d] = { x: x0 + 0.05, y: 0.52 }; lm[i] = { x: x0 + 0.05, y: 0.5 };
-  };
-  eye(33, 133, 159, 145, 468, 0.3);
-  eye(362, 263, 386, 374, 473, 0.6);
-  const p = irisPosition(lm)!;
-  assert.ok(Math.abs(p.x - 0.5) < 1e-9 && Math.abs(p.y - 0.5) < 1e-9);
-  const g = uncalibratedGaze(p, 0, 0);
-  assert.ok(Math.abs(g.x - 0.5) < 1e-9);
-});
-
+// ---- more expressions ----
 test('classify: new expressions from face muscles (disgusted, scared, angry, confused)', () => {
   assert.equal(classify({ noseSneerLeft: 0.5, noseSneerRight: 0.5 }).expression, 'disgusted');
   assert.equal(classify({ mouthUpperUpLeft: 0.4, mouthUpperUpRight: 0.4, eyeSquintLeft: 0.3, eyeSquintRight: 0.3 }).expression, 'disgusted');

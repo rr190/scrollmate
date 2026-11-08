@@ -56,7 +56,6 @@
 .sm-ring-choice, .sm-orbit-avatar { pointer-events: auto; }
 .sm-orbit-centre { position: absolute; top: calc(50% + var(--sm-buddy-height) / 2 + 4px); left: 50%; width: 40%; transform: translateX(-50%); display: flex; align-items: center; flex-direction: column; gap: 4px; text-align: center; }
 .sm-orbit-power-label { font-size: 11px; font-weight: 750; color: #684797; background: #faf6fff2; padding: 3px 9px; border-radius: 12px; white-space: nowrap; }
-.sm-orbit-calibrate { position: absolute; left: 50%; top: calc(50% - var(--sm-buddy-height) / 2 - 16px); transform: translate(-50%, -50%); white-space: nowrap; pointer-events: auto; border: 0; border-radius: 12px; padding: 4px 8px; color: #7952b2; background: #f5efff; font-family: inherit; font-size: 9px; font-weight: 600; line-height: 1.2; cursor: pointer; }
 .sm-orbit-camera-note { position: absolute; left: 50%; top: 15%; transform: translateX(-50%); max-width: 110px; text-align: center; color: #76592b; background: #fff4dc; padding: 3px 5px; border-radius: 7px; font-size: 9px; }
 .sm-orbit-close { position: absolute; left: 50%; top: 9%; transform: translate(-50%, -50%); display: grid; place-items: center; pointer-events: auto; border: 1px solid #e0d0ff; border-radius: 50%; width: 26px; height: 26px; padding: 0; color: #8663bb; background: #faf6ff; font: 20px/1 system-ui; cursor: pointer; }
 .sm-orbit-menu button:focus-visible { outline: 2px solid #9c6cd7; outline-offset: 3px; }

@@ -18,7 +18,7 @@ export function avatarAspect(kind: AvatarKind): number {
   return AVATARS.find((a) => a.id === kind)?.aspect ?? 0.91;
 }
 
-/** `look`: where the viewer is looking relative to the character, -1..1 per axis (eye tracking), or null. */
+/** Optional facing direction for the walking animation, -1..1 per axis. */
 export function Avatar({ kind, mood, look = null }: { kind: AvatarKind; mood: Mood; look?: { x: number; y: number } | null }) {
   if (kind !== 'mochi' && kind !== 'scrollmate') return <span className="sm-look" style={look ? { transform: `translate(${look.x * 3}px, ${look.y * 2}px)` } : undefined}><AnimalCharacter kind={kind} mood={mood} /></span>;
   if (kind === 'scrollmate')

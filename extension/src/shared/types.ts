@@ -16,7 +16,6 @@ export interface Settings {
   avatar: AvatarKind; // which character to draw
   userCam: boolean; // opt-in webcam: on-device MediaPipe expressions so Mochi reacts to the viewer
   roam: boolean; // the companion wanders around the Short and the comments
-  eyeTrack: boolean; // opt-in (needs userCam + a calibration): where on the page the viewer looks, as coarse zones
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -29,7 +28,6 @@ export const DEFAULT_SETTINGS: Settings = {
   commentReactions: false,
   avatar: 'mochi',
   userCam: false,
-  eyeTrack: false,
   roam: true,
 };
 

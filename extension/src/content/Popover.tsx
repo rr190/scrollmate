@@ -2,15 +2,6 @@ import { useEffect, useState } from 'react';
 import type { MemoryRecord, Settings } from '../shared/types';
 import { AVATARS, Avatar } from './Avatar';
 import type { Controller, UiState } from './controller';
-import type { GazeZone } from '../shared/faceSignals';
-
-const GAZE_ZONE_TEXT: Record<GazeZone, string> = {
-  video: 'the video',
-  comments: 'the comments',
-  mochi: 'Mochi',
-  elsewhere: 'the page',
-  off_screen: 'off screen',
-};
 
 function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -80,27 +71,7 @@ export function Popover({ ctl, state, onClose }: { ctl: Controller; state: UiSta
       {st.userCam && state.user && state.camera === 'on' && (
         <div className="sm-hint" style={{ marginTop: -4 }}>
           You: {state.user.present ? (state.user.lookingAway ? 'looking away' : state.user.expression) : 'not in view'}
-          {st.eyeTrack && state.gaze.zone && ` · eyes on ${GAZE_ZONE_TEXT[state.gaze.zone]}`}
         </div>
-      )}
-      {st.userCam && (
-        <>
-          <Toggle
-            label="Eye tracking 👀"
-            hint={
-              !state.gaze.calibrated
-                ? 'Needs a 30-second calibration first'
-                : st.eyeTrack
-                  ? `Knows video vs comments vs Mochi (accuracy ~${Math.round((state.gaze.error ?? 0) * 100)}% of the screen)`
-                  : 'Off. Calibrated and ready'
-            }
-            checked={st.eyeTrack}
-            onChange={(v) => set({ eyeTrack: v })}
-          />
-          <button className="sm-link" onClick={() => ctl.openGazeCalibration()}>
-            {state.gaze.calibrated ? 'Re-calibrate my eyes' : 'Calibrate my eyes'}
-          </button>
-        </>
       )}
       {ctl.env === 'youtube' && <>
         <Toggle label="Comment reactions" hint="Close settings, then hover over comment text for a second" checked={st.commentReactions} onChange={(v) => set({ commentReactions: v })} />
@@ -195,7 +166,7 @@ export function Popover({ ctl, state, onClose }: { ctl: Controller; state: UiSta
             plus short text notes about the last 3 Shorts. With Comment reactions on, hovering for a second also sends that visible comment's text and the current video's notes. Author metadata is not sent.
           </p>
           <p>
-            <b>Never stored</b>: frames, audio or transcripts. Memory is the last 3 one-line summaries, held in RAM and wiped by “Clear memory”. No other browsing data is read. The camera (if on) is processed on this computer only; eye tracking keeps its personal model (numbers, no images) in this browser.
+            <b>Never stored</b>: frames, audio or transcripts. Memory is the last 3 one-line summaries, held in RAM and wiped by “Clear memory”. No other browsing data is read. The camera (if on) is processed on this computer only.
           </p>
         </div>
       )}

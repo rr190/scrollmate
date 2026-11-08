@@ -104,8 +104,8 @@ export function App({ ctl }: { ctl: Controller }) {
   const st0 = s.settings;
   const holdRoam = open || dragPos !== null || !!s.commentVisit || !!s.bubble || s.mood === 'speaking';
   const roamOn = st0.roam && st0.enabled && (ctl.env === 'stage' || s.onShorts);
-  const latest = useRef({ holdRoam, roamOn, mood: s.mood, gazeZone: st0.eyeTrack ? s.gaze.zone : null, size, vp });
-  latest.current = { holdRoam, roamOn, mood: s.mood, gazeZone: st0.eyeTrack ? s.gaze.zone : null, size, vp };
+  const latest = useRef({ holdRoam, roamOn, mood: s.mood, size, vp });
+  latest.current = { holdRoam, roamOn, mood: s.mood, size, vp };
   useEffect(() => {
     if (!roamOn) {
       setRoam(null);
@@ -128,8 +128,6 @@ export function App({ ctl }: { ctl: Controller }) {
         rects: { video: visibleRect(videoEl, L.vp), comments: panels.sort((a, b) => b.width * b.height - a.width * a.height)[0] ?? null },
         area: roamArea(L.vp, L.size),
         size: L.size,
-        gazeZone: L.gazeZone,
-        gazeY: ctl.gazePoint?.y ?? null,
       });
       if (!step) return;
       setRoam({ ...step.target, ms: step.ms, dir: Math.sign(step.target.x - from.x), stroll: step.stroll });
@@ -167,8 +165,8 @@ export function App({ ctl }: { ctl: Controller }) {
     setOpen(false);
   };
   const roamingWalk = walking && !open && !dragPos && !destination;
-  // face the way it walks; otherwise toward your gaze (eye tracking)
-  const look = roamingWalk && roam ? { x: roam.dir, y: 0 } : s.settings.eyeTrack ? s.gaze.look : null;
+  // Face the direction of ordinary walking.
+  const look = roamingWalk && roam ? { x: roam.dir, y: 0 } : null;
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;

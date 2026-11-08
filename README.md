@@ -68,7 +68,7 @@ To use a backend somewhere other than `http://localhost:8000`, build with `VITE_
 ## Testing on real Shorts
 
 1. Open `https://www.youtube.com/shorts/...`. The character appears asleep in the upper right of the video.
-2. Click it to open the ring, then tap the character again to turn it on. Video reactions, comment reactions, voice, camera reactions and eye tracking turn on together. Camera access still needs browser permission and eye tracking needs a one-time calibration; use **Set up eyes** inside the ring to calibrate.
+2. Click it to open the ring, then tap the character again to turn it on. Video reactions, comment reactions, voice and camera reactions turn on together. Camera access still needs browser permission.
 3. **Click the ScrollMate toolbar icon once per tab.** This grants `activeTab`, which `captureVisibleTab` needs. Without it, ScrollMate falls back to drawing the `<video>` to a canvas, then to title and captions only. The console reports the capture source.
 4. Open DevTools and filter the console for `[ScrollMate]`. You'll see navigation, play, pause and loop events, frames (`via screen|canvas|text`), proposals, and each `DELIVER` with its reason.
 5. Scroll normally. Reactions appear only at natural gaps: a loop, a pause, or the end of a Short. They are dropped when you scroll away, unless they are a cross-Short callback.
@@ -77,15 +77,13 @@ To use a backend somewhere other than `http://localhost:8000`, build with `VITE_
 
 Click the floating character to expand a lavender ring around that same character. Choose **Personality** (Witty / Hype / Chill), **Reactions** (Rare / Balanced / Chatty), or one of six avatars. Tap the character in the centre to turn the buddy on or off; the ring closes automatically. Click outside, press Escape or use the small close button to close just the ring.
 
-The ring is at most 320 px wide (previously 420 px); its calibration action sits above the character so it does not cover the avatar choices.
+The ring is at most 320 px wide (previously 420 px).
 
-The buddy has one power switch. Video reactions, comment reactions, voice, camera and eye tracking stay enabled together while it is on. Turning it off stops speech, camera, gaze and pending reactions. Avatar and personality preferences are saved. There is no separate settings card, feature switch panel or three-step power sequence.
+The buddy has one power switch. Video reactions, comment reactions, voice and camera stay enabled together while it is on. Turning it off stops speech, camera and pending reactions. Avatar and personality preferences are saved. There is no separate settings card, feature switch panel or three-step power sequence.
 
-Camera access still needs browser permission. **Set up eyes** inside the ring opens the one-time gaze calibration. Camera frames are processed locally. Voice speaks only at quiet moments. Browser screen-capture permission requires a toolbar click; canvas/text fallbacks remain available. Near a screen edge, the buddy temporarily moves inward to fit its ring; closing restores its saved position.
+Camera access still needs browser permission. Camera frames are processed locally. Voice speaks only at quiet moments. Browser screen-capture permission requires a toolbar click; canvas/text fallbacks remain available. Near a screen edge, the buddy temporarily moves inward to fit its ring; closing restores its saved position.
 
-Eye tracking assists timing without becoming a permanent mute switch. Uncalibrated gaze is ignored. An off-screen gaze estimate cannot mark a visible, forward-facing viewer as absent. Gaze alone may defer a reel comment for two seconds, then allow a silent bubble when the other timing rules permit it. Confirmed absence, laughter and deliberately hovering a comment still defer reel comments. Rare still filters lower-importance reactions; choose Balanced or Chatty for more frequent lines.
-
-Gaze points guide the buddy's eyes and movement toward the comments. They expire after 1.5 seconds without fresh camera data; neither a stale position nor its attention zone should steer movement. The calibration model is saved locally, while raw movement coordinates stay transient. Only coarse attention-zone changes reach the optional backend debug feed. Use **Set up eyes** on the monitor and camera position you will actually use; recalibrate if the estimate drifts. Gaze alone is not evidence that someone liked a character or video.
+There is no eye tracking. Camera labels such as looking away and laughing still hold reel comments; deliberately hovering a comment does too. Rare still filters lower-importance reactions; choose Balanced or Chatty for more frequent lines. Calibration data saved by earlier versions is deleted from the browser on start-up.
 
 If the vision model understands a reel but produces only a facial expression, the backend gives the text model one comment check using those existing observations. This adds no image upload and has a three-second deadline; it can still return nothing. Rare waits for the final observation and retains its importance threshold. Failed vision observations now return an explicit error, and the extension retries a later frame within its existing per-reel frame budget. Waking on an already-open reel also starts its title/context pipeline.
 
@@ -102,7 +100,7 @@ The pipeline adapts the streaming and cancellation architecture of [KoljaB/Realt
 - The shared offscreen page captures mono PCM16 at 16 kHz on an AudioWorklet, sending 40 ms binary frames over one WebSocket to `/scrollmate/talk/live`.
 - The backend maintains one Gemini Live session per connection. A bounded input queue prevents an accumulating audio backlog. Gemini performs speech recognition and voice activity/turn detection while generating speech directly.
 - Reply PCM at 24 kHz streams into a playback AudioWorklet. Captions update incrementally. Interruption clears buffered audio immediately; generation numbers reject stale chunks. The microphone stays open during playback so you can interrupt.
-- Swiping and reading comments update context in the same session. A `current_reel` tool reads the latest notes without inserting an unsolicited spoken turn. Other frame analysis, comments, camera expressions, gaze and roaming remain active. Ambient reactions use silent bubbles during Talk; the reel is never paused or muted automatically.
+- Swiping and reading comments update context in the same session. A `current_reel` tool reads the latest notes without inserting an unsolicited spoken turn. Other frame analysis, comments, camera expressions and roaming remain active. Ambient reactions use silent bubbles during Talk; the reel is never paused or muted automatically.
 
 Set `GEMINI_API_KEY` in `backend/.env`. The defaults are `SCROLLMATE_TALK_LIVE_MODEL=gemini-3.8-live` and `SCROLLMATE_TALK_VOICE=Leda`; both can be overridden. The native Live model must be available to your key. Talk no longer uses the separate TTS model or the 30-second record/upload loop. The HTTP `/scrollmate/talk` endpoint remains available for compatibility, including typed turns, and has its own `SCROLLMATE_TALK_MODEL` / `SCROLLMATE_TALK_VOICE_MODEL` overrides.
 
@@ -138,6 +136,21 @@ npm.cmd run test:comments:browser  # installed Chrome/Edge, or set CHROME_PATH
 
 The browser checks use a local fixture and stubbed model responses, in both normal and reduced-motion modes. They verify hover intent, placement, target changes, cancellation, navigation and preserving the home position. Real YouTube layouts and live reaction quality still need a manual check after reloading the extension.
 
+## Cross-feature stress tests
+
+These checks switch every feature on at once and drive them together. They stub all model and device calls.
+
+```powershell
+# From extension/ (build first for the browser check)
+npm.cmd run test:stress:browser  # reel reactions + comments + Talk + camera + feelings + voice + swipes + power, then a seeded fuzz
+npm.cmd run test:timing          # timing engine: bubble hold, one delivery per tick, decision log counter
+npm.cmd run test:tabs            # two YouTube tabs: one tab's power-off or reset never cancels the other's requests
+# From backend/
+.\.venv\Scripts\python.exe -m unittest tests.test_stress -v  # every endpoint concurrently, out-of-order model answers, bursts, hostile input
+```
+
+The fuzz runs 350 random steps and checks invariants after each one. Powered off must mean no Talk, no visit, no camera, no queue and no requests. At most one voice line may play, and none during Talk. A visit always matches its request.
+
 ## Demo mode (for the stage)
 
 - **Offline demo stage:** in the popover, click **Open offline demo stage ↗**, or open `chrome-extension://<id>/stage.html`. It's a fake Shorts player with three cakes, so it needs neither YouTube nor Wi-Fi.
@@ -159,8 +172,8 @@ Current output (balanced):
 ```
 policy       delivered interruptions  stale duplicates  callbacks
 Naive               23            10      2          1         12
-ScrollMate          11             0      0          0          8
-Average over 100 sessions of 20 Shorts: Naive 9.3 interruptions, ScrollMate 0.0
+ScrollMate          16             1      0          0         11
+Average over 100 sessions of 20 Shorts: Naive 9.3 interruptions, ScrollMate 0.1
 ```
 
 Both policies get exactly the same simulated reactions: frames at 10%, 50% and 85% of the first pass, 2.5–5 s of analysis latency, and occasional repeated lines from the LLM. "Interruption" means a reaction delivered while the video was playing, away from the start, the end and a just-finished loop. **Be honest about what this number is.** It shows the policy behaves as designed on scripted sessions. It does not show that people like it. For that, run `eval/rating_sheet.md` with 5 testers and put their % funny into the headline the script prints.
@@ -170,7 +183,7 @@ Both policies get exactly the same simulated reactions: frames at 10%, 50% and 8
 - **Detection** (`content/shorts.ts`): `yt-navigate-finish`, `popstate`, polling `location.href` every 500 ms, and a `MutationObserver` that re-finds the active `<video>` by visible area. It never depends on a single selector. Loops are detected from the `currentTime` wrap-around, because Shorts use `<video loop>`.
 - **Frames:** `captureVisibleTab` (ScrollMate hidden for two frames, cropped to the video rect, ≤512 px JPEG, at most 3 per Short with ≥600 ms between captures), then canvas, then text only.
 - **Memory:** a 3-item ring buffer in the background worker, mirrored to `chrome.storage.session`. That storage lives in RAM, never on disk, and survives MV3 worker restarts. Analyses are cached by video ID on both sides.
-- **Timing engine** (`shared/timing.ts`) rules, in order: disabled, duplicate, expired, below the importance threshold (Rare 0.75, Balanced 0.55, Chatty 0.4), stale (scrolled away, not a callback), per-Short cap, fast scrolling (≥3 Shorts in 6 s), cooldown (Rare 45 s, Balanced 20 s, Chatty 12 s), natural gap → `SPEAK_NOW`. Mid-playback is `WAIT`, or `SAVE_FOR_LATER` for callbacks. The one exception is a time-sensitive reaction with importance ≥ 0.9, which may show as a silent bubble if it isn't near a key moment. Voice is used only when it's known to be quiet (paused, muted, or the demo). Otherwise the bubble shows silently. The engine never touches playback or volume.
+- **Timing engine** (`shared/timing.ts`) rules, in order: disabled, duplicate, expired, a previous bubble still on screen or still being spoken (video reactions wait; a deliberately selected comment does not), below the importance threshold (Rare 0.75, Balanced 0.55, Chatty 0.4), stale (scrolled away, not a callback), per-Short cap, fast scrolling (≥3 Shorts in 6 s), cooldown (Rare 45 s, Balanced 20 s, Chatty 12 s), natural gap → `SPEAK_NOW`. Mid-playback is `WAIT`, or `SAVE_FOR_LATER` for callbacks. The one exception is a time-sensitive reaction with importance ≥ 0.9, which may show as a silent bubble if it isn't near a key moment. Voice is used only when it's known to be quiet (paused, muted, or the demo). Otherwise the bubble shows silently. The engine never touches playback or volume.
 - **Live loop (real Shorts):**
   1. **On swipe:** title rules (`shared/moments.ts`, < 1 ms) give an instant non-specific face ("I tried…" → 🤔, "POV:" → 😂). `POST /scrollmate/swipe` then confirms it from the title (about 0.6 s).
   2. **Frame 1 at about 0.4 s:** `POST /scrollmate/observe` sends one frame plus the backend's running **belief** for that Short. It returns the updated belief, a face for this moment, `change` (none, minor or major), a `level` from 0 to 3, maybe one line, and `next_capture_at`.

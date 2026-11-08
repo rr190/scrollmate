@@ -72,7 +72,7 @@ def live_config(context: LiveContext):
             f"Keep replies to one or two short sentences a {audience()[0]}-year-old understands. "
             "Listen naturally and let the child interrupt. "
             "Match serious feelings with a gentle attentive tone. Avoid baby talk, forced jokes, diagnoses, "
-            "claims to be human or a therapist, and invented memories. Do not infer likes from gaze. "
+            "claims to be human or a therapist, and invented memories. Do not infer likes from viewing alone. "
             "Respond to the child speaking to you, not background reel dialogue. Stay quiet until addressed. "
             "When asked about the current reel, comments, or an unclear 'that', always call current_reel first: "
             "the child may have swiped or selected another comment since your last answer. "
