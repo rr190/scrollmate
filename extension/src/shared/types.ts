@@ -1,13 +1,13 @@
 import type { Emotion, EmotionCue } from './emotions';
 
-export type AvatarKind = 'mochi' | 'scrollmate';
+export type AvatarKind = 'mochi' | 'scrollmate' | 'cat' | 'bunny' | 'panda' | 'shiba';
 
 export type Personality = 'witty' | 'hype' | 'chill';
 export type Frequency = 'rare' | 'balanced' | 'chatty';
 
 export interface Settings {
   enabled: boolean; // user must turn the AI on explicitly
-  voice: boolean; // off by default: the bubble is the main channel
+  voice: boolean; // enabled with the master switch; delivery still waits for a quiet moment
   personality: Personality;
   frequency: Frequency;
   demo: boolean;
@@ -26,7 +26,7 @@ export const DEFAULT_SETTINGS: Settings = {
   frequency: 'balanced',
   demo: false,
   demoLive: false,
-  commentReactions: true,
+  commentReactions: false,
   avatar: 'mochi',
   userCam: false,
   eyeTrack: false,

@@ -7,7 +7,7 @@ Built for the incident.io track at WHACK 2026. The AI *proposes* reactions; a de
 ```
 extension/   Chrome MV3 extension (TypeScript, React, Vite)
   src/shared/timing.ts     ← the timing engine (pure, also used by the eval)
-  src/content/             character, popover, Shorts detection, frame capture, voice, demo
+  src/content/             character, radial ring, Shorts detection, frame capture, voice, demo
   src/background/          captureVisibleTab, backend calls, 3-Short memory
   src/stage/               offline demo stage page
 backend/     FastAPI + LiteLLM + Instructor (/scrollmate/analyse, /scrollmate/react)
@@ -55,6 +55,7 @@ Groq's free limits are **per model: 8k tokens/min and 1k requests/day**. An imag
 ```bash
 cd extension
 npm install
+npm run setup:mediapipe  # one-time camera runtime and face-model setup
 npm run build        # outputs extension/dist
 ```
 
@@ -67,25 +68,36 @@ To use a backend somewhere other than `http://localhost:8000`, build with `VITE_
 ## Testing on real Shorts
 
 1. Open `https://www.youtube.com/shorts/...`. The character appears asleep in the upper right of the video.
-2. Click it and turn on **AI companion**. It is off until you do this.
-3. **Click the ScrollMate toolbar icon once per tab.** This grants `activeTab`, which `captureVisibleTab` needs. Without it, ScrollMate falls back to drawing the `<video>` to a canvas, then to title and captions only. The popover shows which source it is using.
+2. Click it to open the ring, then tap the character again to turn it on. Video reactions, comment reactions, voice, camera reactions and eye tracking turn on together. Camera access still needs browser permission and eye tracking needs a one-time calibration; use **Set up eyes** inside the ring to calibrate.
+3. **Click the ScrollMate toolbar icon once per tab.** This grants `activeTab`, which `captureVisibleTab` needs. Without it, ScrollMate falls back to drawing the `<video>` to a canvas, then to title and captions only. The console reports the capture source.
 4. Open DevTools and filter the console for `[ScrollMate]`. You'll see navigation, play, pause and loop events, frames (`via screen|canvas|text`), proposals, and each `DELIVER` with its reason.
 5. Scroll normally. Reactions appear only at natural gaps: a loop, a pause, or the end of a Short. They are dropped when you scroll away, unless they are a cross-Short callback.
-6. **Export log** in the popover downloads the timing engine's decision log as JSON (time, reaction, inputs, decision, reason).
+
+## Buddy ring
+
+Click the floating character to expand a lavender ring around that same character. Choose **Personality** (Witty / Hype / Chill), **Reactions** (Rare / Balanced / Chatty), or one of six avatars. Tap the character in the centre to turn the buddy on or off; the ring closes automatically. Click outside, press Escape or use the small close button to close just the ring.
+
+The buddy has one power switch. Video reactions, comment reactions, voice, camera and eye tracking stay enabled together while it is on. Turning it off stops speech, camera, gaze and pending reactions. Avatar and personality preferences are saved. There is no separate settings card, feature switch panel or three-step power sequence.
+
+Camera access still needs browser permission. **Set up eyes** inside the ring opens the one-time gaze calibration. Camera frames are processed locally. Voice speaks only at quiet moments. Browser screen-capture permission requires a toolbar click; canvas/text fallbacks remain available. Near a screen edge, the buddy temporarily moves inward to fit its ring; closing restores its saved position.
+
+Eye tracking assists timing without becoming a permanent mute switch. Uncalibrated gaze is ignored. An off-screen gaze estimate cannot mark a visible, forward-facing viewer as absent. Gaze alone may defer a reel comment for two seconds, then allow a silent bubble when the other timing rules permit it. Confirmed absence, laughter and deliberately hovering a comment still defer reel comments. Rare still filters lower-importance reactions; choose Balanced or Chatty for more frequent lines.
+
+Verification: `npm.cmd run test:menu` checks master settings, and `npm.cmd run test:menu:browser` checks interaction and alignment at 1440 x 1000, 800 x 600 and 390 x 844, including reduced motion and every viewport corner. Browser checks stub camera/model requests; screenshots are saved in `.artifacts/orbit-menu-*.png`.
 
 ## Reactions to comments
 
-On a real YouTube Short, enable **AI companion** and **Comment reactions** in the buddy's settings, close the buddy's settings, then open YouTube's comments yourself. Clicking outside the buddy closes its settings automatically. Rest the mouse on a visible top-level comment's text for a moment (0.25 s). Passing over comments, links, replies, or buttons does not trigger a request.
+On a real YouTube Short, open the ring and tap the character to turn it on (this enables comment reactions too), then open YouTube's comments yourself. Clicking outside the buddy closes its menu automatically. Rest the mouse on a visible top-level comment's text for a moment (0.25 s). Passing over comments, links, replies, or buttons does not trigger a request.
 
 The buddy hops to a free lane beside the comments panel while the backend requests a text-only reaction from the selected text model. A purple outline identifies the selected comment. It reacts silently after arriving, or shows only an expression when no line is worth saying. Click its bubble to dismiss it and return home. Automatic visits preserve its saved, dragged position. If neither side has room, it stays home instead of covering the comments. Reduced-motion preferences disable travel animation.
 
-There is no wait between comment visits: no cooldown and no countdown. The only thing it waits for is a reaction bubble still on screen; click it to dismiss it, or wait for it to fade. Each comment text is attempted once per Short (up to 100), and **Clear memory** resets this local session list. A stationary hover retries as soon as the previous bubble is gone, with a short status under the buddy explaining the wait. Video reactions wait while the user is reading a comment, so repeated video bubbles cannot block selection indefinitely. **Check comment detection** in settings reports how many visible comments are recognised and whether there is room beside them; the page console includes detection counts without comment text.
+There is no wait between comment visits: no cooldown and no countdown. The only thing it waits for is a reaction bubble still on screen; click it to dismiss it, or wait for it to fade. Each comment text is attempted once per Short (up to 100). A stationary hover retries as soon as the previous bubble is gone, with a short status under the buddy explaining the wait. Video reactions wait while the user is reading a comment, so repeated video bubbles cannot block selection indefinitely. The page console includes detection counts without comment text.
 
 Scrolling, closing the panel, changing the comment's text/layout, navigating to another Short, opening buddy controls, dragging, disabling the feature, and switching personality cancel the visit. The background worker aborts that comment request, and the content script ignores late responses. The buddy returns home after its reaction.
 
 `POST /scrollmate/comment` accepts `requestId`, `videoId`, `commentId`, `text` (max 1200 characters), optional `title`/`videoSummary`, `personality` and `frequency`. It returns the same request/comment identifiers, an optional emotion, and zero or one reaction bound to that exact selection. The endpoint reuses structured output and the conversational personality prompts, has a six-second generation deadline, and degrades to silence on failure. Mock mode gives a curious expression without calling a model. No extra vision call or humaniser service is needed.
 
-The selected text and existing video notes are sent to the model provider only after a deliberate hover while the feature is on. Author metadata and the whole thread are not collected. For context, the extension keeps the last 5 comments it reacted to on the current Short, with its own replies, in memory only. That list goes with the next comment request and is wiped when you change Short or press **Clear memory**. Raw comment text is not persisted or added to the backend's live feed. YouTube may change its comment DOM; the detector supports current `ytd-comment-view-model` and older `ytd-comment-renderer` elements and intentionally limits support to top-level comments on Shorts.
+The selected text and existing video notes are sent to the model provider only after a deliberate hover while the feature is on. Author metadata and the whole thread are not collected. For context, the extension keeps the last 5 comments it reacted to on the current Short, with its own replies, in memory only. That list goes with the next comment request and is wiped when you change Short. Raw comment text is not persisted or added to the backend's live feed. YouTube may change its comment DOM; the detector supports current `ytd-comment-view-model` and older `ytd-comment-renderer` elements and intentionally limits support to top-level comments on Shorts.
 
 Local checks (no provider calls):
 
@@ -102,11 +114,9 @@ The browser checks use a local fixture and stubbed model responses, in both norm
 ## Demo mode (for the stage)
 
 - **Offline demo stage:** in the popover, click **Open offline demo stage ↗**, or open `chrome-extension://<id>/stage.html`. It's a fake Shorts player with three cakes, so it needs neither YouTube nor Wi-Fi.
-- **On YouTube:** turn on the **Demo mode** toggle. A DEMO badge and progress strip appear.
 - The script: (1) a successful cake, (2) a burnt cake, (3) a professional mirror-glaze cake. ScrollMate stays silent on 1 and 2, because their reactions fall below the importance threshold for *Balanced*. It starts thinking during Short 3, **waits** while it plays, then delivers the callback at the end: *"We've just witnessed the rise, fall and redemption of the entire baking industry."*
 - Press `]` or click **Next Short** to skip ahead. Click the phone to pause. Set frequency to **Chatty** to see Short 2's line delivered too. Personality changes the lines.
-- **Demo reactions: Live LLM** sends the same three predefined observations to `/scrollmate/react`. It falls back to the canned lines if the backend is unreachable.
-- Turn on Voice to hear it. The demo has no soundtrack, so it counts as a quiet moment.
+- Voice follows the buddy's power switch. The demo has no soundtrack, so it counts as a quiet moment.
 
 ## Evaluation
 
@@ -200,7 +210,7 @@ Both draw every emotion. TypeScript enforces it, because each avatar's faces are
 
 - Off until the user turns it on. A green or grey dot shows the state. Turning it off cancels the queue, speech and in-flight requests immediately.
 - Sent to the AI provider: up to 3 downscaled frames per Short, the title, the channel name, visible captions, and one-line notes about the last 3 Shorts.
-- Never stored: frames, audio, transcripts. **Clear memory** empties the ring buffer, the analysis cache, the queue and the decision log.
+- Never stored: frames, audio, transcripts.
 - Permissions: `storage`, `activeTab`, and host access to `www.youtube.com` and `localhost:8000`.
 
 ## Known limitations (honest list)

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Avatar, avatarAspect } from './Avatar';
 import type { Controller, Position } from './controller';
-import { Popover } from './Popover';
+import { RingMenu } from './RingMenu';
 import { COMMENT_TRAVEL_MS, commentPosition, companionSize, PANEL } from './comments';
 import { RoamPlanner, roamArea, type Pt } from './roam';
 import type { Rect } from '../shared/types';
@@ -61,7 +61,8 @@ export function App({ ctl }: { ctl: Controller }) {
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
-      if (companion.current && !event.composedPath().includes(companion.current)) setOpen(false);
+      const path = event.composedPath();
+      if (companion.current && !path.includes(companion.current)) setOpen(false);
     };
     document.addEventListener('pointerdown', outside, true);
     return () => document.removeEventListener('pointerdown', outside, true);
@@ -88,7 +89,7 @@ export function App({ ctl }: { ctl: Controller }) {
     return () => window.clearTimeout(id);
   }, [s.position, vp.w, vp.h, s.onShorts, ctl]);
 
-  // Close popover on Escape.
+  // Close the ring on Escape.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -148,11 +149,23 @@ export function App({ ctl }: { ctl: Controller }) {
   const destination = visit ? commentPosition(visit, vp.w, vp.h) : null;
   const clampX = (x: number) => Math.min(vp.w - size - 4, Math.max(4, x));
   const clampY = (y: number) => Math.min(vp.h - size - 4, Math.max(4, y));
-  const x = dragPos ? dragPos.x : destination?.x ?? (roam ? clampX(roam.x) : clampX(pos.fx * vp.w));
-  const y = dragPos ? dragPos.y : destination?.y ?? (roam ? clampY(roam.y) : clampY(pos.fy * vp.h));
+  const homeX = destination?.x ?? clampX(roam?.x ?? pos.fx * vp.w);
+  const homeY = destination?.y ?? clampY(roam?.y ?? pos.fy * vp.h);
+  const height = Math.round(size * avatarAspect(s.settings.avatar));
+  const ringSize = Math.max(size * 2, Math.min(420, vp.w - 24, vp.h - 24));
+  const insetX = (ringSize - size) / 2;
+  const insetY = (ringSize - height) / 2;
+  // Make room for the ring near an edge without changing the saved home position.
+  const x = dragPos?.x ?? (open ? Math.max(12 + insetX, Math.min(vp.w - ringSize - 12 + insetX, homeX)) : homeX);
+  const y = dragPos?.y ?? (open ? Math.max(12 + insetY, Math.min(vp.h - ringSize - 12 + insetY, homeY)) : homeY);
   rendered.current = { x, y };
   const onRight = x + size / 2 > vp.w / 2;
-  const roamingWalk = walking && !dragPos && !destination;
+  const activate = () => {
+    if (!open) { setOpen(true); return; }
+    void ctl.updateSettings({ enabled: !s.settings.enabled });
+    setOpen(false);
+  };
+  const roamingWalk = walking && !open && !dragPos && !destination;
   // face the way it walks; otherwise toward your gaze (eye tracking)
   const look = roamingWalk && roam ? { x: roam.dir, y: 0 } : s.settings.eyeTrack ? s.gaze.look : null;
 
@@ -172,6 +185,7 @@ export function App({ ctl }: { ctl: Controller }) {
     const dy = e.clientY - d.sy;
     if (!d.moved && Math.hypot(dx, dy) < 5) return;
     d.moved = true;
+    setOpen(false);
     setDragPos({ x: clampX(d.ox + dx), y: clampY(d.oy + dy) });
   };
   const onPointerUp = () => {
@@ -185,7 +199,7 @@ export function App({ ctl }: { ctl: Controller }) {
       setRoam(null);
       setWalking(false);
     } else {
-      setOpen((o) => !o);
+      activate();
     }
   };
 
@@ -195,20 +209,25 @@ export function App({ ctl }: { ctl: Controller }) {
       {visit && <div className="sm-comment-outline" aria-hidden="true" style={{ left: visit.rect.x - 4, top: visit.rect.y - 4, width: visit.rect.width + 8, height: visit.rect.height + 8 }} />}
       <div
         ref={companion}
-        className={`sm-companion ${onRight ? 'sm-right' : 'sm-left'} ${dragPos ? 'sm-manual-position' : ''} ${travelling || visit?.phase === 'running' || roamingWalk ? 'sm-travelling' : ''} ${roamingWalk && roam?.stroll ? 'sm-strolling' : ''} ${destination ? `sm-comment-${destination.side}` : ''} ${y < 130 ? 'sm-bubble-below' : ''}`}
+        className={`sm-companion ${onRight ? 'sm-right' : 'sm-left'} ${dragPos || open ? 'sm-manual-position' : ''} ${open ? 'sm-ring-open' : ''} ${!open && (travelling || visit?.phase === 'running' || roamingWalk) ? 'sm-travelling' : ''} ${roamingWalk && roam?.stroll ? 'sm-strolling' : ''} ${destination ? `sm-comment-${destination.side}` : ''} ${y < 130 ? 'sm-bubble-below' : ''}`}
         style={{
           left: 0, top: 0, transform: `translate3d(${x}px, ${y}px, 0)`, width: size,
           ...(roamingWalk && roam ? { transitionDuration: `${roam.ms}ms`, transitionTimingFunction: roam.stroll ? 'linear' : 'cubic-bezier(0.45, 0.05, 0.55, 0.95)' } : {}),
         }}
       >
-        {s.bubble && (
+        {open && <div className="sm-ring-anchor" style={{ left: -insetX, top: -insetY, width: ringSize, height: ringSize }}>
+          <RingMenu ctl={ctl} state={s} onClose={() => {
+            setOpen(false); companion.current?.querySelector<HTMLButtonElement>('.sm-char-btn')?.focus({ preventScroll: true });
+          }} />
+        </div>}
+        {!open && s.bubble && (
           <div key={s.bubble.id} className="sm-bubble" style={{ maxWidth: Math.max(60, Math.min(260, (destination ? destination.side === 'left' : onRight) ? x + size - 12 : vp.w - x - 12)) }} role="status" aria-live="polite" onClick={() => ctl.hideBubble()}>
             {s.bubble.text}
           </div>
         )}
         <button
           className={`sm-char-btn ${dragPos ? 'sm-dragging' : ''}`}
-          style={{ width: size, height: Math.round(size * avatarAspect(s.settings.avatar)) }}
+          style={{ width: size, height }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -216,11 +235,11 @@ export function App({ ctl }: { ctl: Controller }) {
             drag.current = null;
             setDragPos(null);
           }}
-          aria-label={`ScrollMate (${st.enabled ? 'active' : 'off'}). Click for settings, drag to move.`}
+          aria-label={open ? (st.enabled ? 'Turn buddy off' : 'Turn buddy on') : `ScrollMate (${st.enabled ? 'active' : 'off'}). Click to open ring, drag to move.`}
           aria-expanded={open}
           onClick={(e) => {
             // Pointer clicks are handled above to distinguish dragging; keyboard activation still opens settings.
-            if (e.detail === 0) setOpen((o) => !o);
+            if (e.detail === 0) activate();
           }}
         >
           <span className="sm-float">
@@ -233,10 +252,10 @@ export function App({ ctl }: { ctl: Controller }) {
           )}
         </button>
         {/* No label once it's reacting: a face-only reaction speaks for itself (no lone "Hmm…"). */}
-        {visit && !s.bubble && visit.phase !== 'reacting' && (
+        {!open && visit && !s.bubble && visit.phase !== 'reacting' && (
           <span className="sm-reading-label" role="status">{visit.phase === 'running' ? 'Coming over…' : 'Reading…'}</span>
         )}
-        {!visit && st.enabled && s.commentHint && <span className="sm-reading-label" role="status">{s.commentHint}</span>}
+        {!open && !visit && st.enabled && s.commentHint && <span className="sm-reading-label" role="status">{s.commentHint}</span>}
 
         {s.demo && ctl.env === 'youtube' && (
           <div className="sm-demo-strip">
@@ -252,8 +271,8 @@ export function App({ ctl }: { ctl: Controller }) {
           </div>
         )}
 
-        {open && <Popover ctl={ctl} state={s} onClose={() => setOpen(false)} />}
       </div>
+
     </div>
   );
 }

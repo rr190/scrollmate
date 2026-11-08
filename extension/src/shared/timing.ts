@@ -54,6 +54,8 @@ export const SAME_SHORT_GAP_MS: Record<Frequency, number> = { rare: 8_000, balan
 export const FAST_SCROLL = { count: 3, windowMs: 6_000 };
 export const LOOP_GAP_MS = 2_500;
 export const END_GAP_S = 1.2;
+/** Gaze estimates can drift. Briefly defer, then allow text without speaking over the viewer. */
+export const GAZE_HOLD_MS = 2_000;
 const KEY_MOMENT_S = 1.5;
 const MAX_QUEUE = 6;
 const MAX_LOG = 1_000;
@@ -172,8 +174,11 @@ export function decide(
   if (s.userLaughing) return v('WAIT', 'user_laughing', 'you are laughing: not talking over you');
   if (s.readingComments || s.commentRequestId)
     return v('WAIT', 'reading_comments', 'reading a comment: video reactions wait');
-  if (s.userReadingComments) return v('WAIT', 'user_reading_comments', 'your eyes are on the comments: video reactions wait');
-  if (s.userEyesElsewhere) return v('WAIT', 'user_eyes_busy', 'your eyes are elsewhere on the page: waiting until they are on the video or Mochi');
+  const gazeBusy = s.userReadingComments || s.userEyesElsewhere;
+  if (gazeBusy && now - c.createdAt < GAZE_HOLD_MS) {
+    if (s.userReadingComments) return v('WAIT', 'user_reading_comments', 'your eyes are on the comments: briefly holding the video reaction');
+    return v('WAIT', 'user_eyes_busy', 'gaze is away from the video: briefly holding the reaction');
+  }
 
   if (s.videoId && (mem.deliveredPerVideo.get(s.videoId) ?? 0) >= MAX_PER_SHORT[opts.frequency])
     return c.isCallback
@@ -199,8 +204,8 @@ export function decide(
   const gap = naturalGap(s, now);
   if (gap) {
     const quiet = isQuiet(s);
-    if (opts.voiceEnabled && quiet) return v('SPEAK_NOW', `gap_${gap}`, `natural gap (${gap}), quiet: speaking`, 'voice');
-    const why = opts.voiceEnabled ? ', audio may be playing: silent bubble' : '';
+    if (opts.voiceEnabled && quiet && !gazeBusy) return v('SPEAK_NOW', `gap_${gap}`, `natural gap (${gap}), quiet: speaking`, 'voice');
+    const why = gazeBusy ? ', gaze uncertain: silent bubble' : opts.voiceEnabled ? ', audio may be playing: silent bubble' : '';
     return v('SPEAK_NOW', `gap_${gap}`, `natural gap (${gap})${why}`, 'bubble');
   }
 

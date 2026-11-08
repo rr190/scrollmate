@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { Controller, type Env } from './controller';
 import css from './styles.css?inline';
+import orbitCss from './orbit.css?inline';
 
 /** Mount ScrollMate inside a Shadow DOM so page CSS and ours never mix. */
 export function mountScrollMate(env: Env): Controller {
@@ -11,7 +12,7 @@ export function mountScrollMate(env: Env): Controller {
   host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483000;';
   const shadow = host.attachShadow({ mode: 'open' });
   const style = document.createElement('style');
-  style.textContent = css;
+  style.textContent = `${css}\n${orbitCss}`;
   shadow.appendChild(style);
   const mountPoint = document.createElement('div');
   shadow.appendChild(mountPoint);

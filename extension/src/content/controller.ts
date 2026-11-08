@@ -22,6 +22,7 @@ import { GAZE_MODEL_KEY, gazeZone, screenToViewport, ZoneDwell, type GazeModelDa
 import { CueTrack, type Emotion, type EmotionCue } from '../shared/emotions';
 import { TimingEngine, type Candidate, type Delivery, type PlaybackSnapshot } from '../shared/timing';
 import { DEFAULT_SETTINGS, type MemoryRecord, type ReactionProposal, type Rect, type Settings } from '../shared/types';
+import { applySettings } from '../shared/settings';
 import { DEMO_SHORTS, DemoDriver, type DemoShort, type DemoView } from './demo';
 import { readPageText, ShortsWatcher, type LeftInfo, type ShortInfo } from './shorts';
 import { Speaker } from './speech';
@@ -156,7 +157,8 @@ export class Controller {
   async init() {
     try {
       const r = await chrome.storage.local.get([SETTINGS_KEY, posKey(this.env)]);
-      const settings = { ...DEFAULT_SETTINGS, ...(r[SETTINGS_KEY] ?? {}) } as Settings;
+      const saved = { ...DEFAULT_SETTINGS, ...(r[SETTINGS_KEY] ?? {}) } as Settings;
+      const settings = applySettings(saved, { enabled: this.env === 'stage' || saved.enabled });
       if (this.env === 'stage') Object.assign(settings, { demo: true, enabled: true });
       this.set({ settings, position: (r[posKey(this.env)] as Position) ?? null });
       await this.loadGazeModelInfo();
@@ -179,7 +181,9 @@ export class Controller {
       });
       this.comments.start();
       chrome.runtime.onMessage.addListener((m: { type?: string }) => {
-        if (m?.type === 'ACTIVE_TAB_GRANTED') this.set({ note: 'Screen frames allowed for this tab.' });
+        if (m?.type === 'ACTIVE_TAB_GRANTED') {
+          this.set({ note: 'Screen frames allowed for this tab.' });
+        }
       });
     }
     chrome.runtime.onMessage.addListener((m: TabMessage) => {
@@ -201,12 +205,13 @@ export class Controller {
     this.comments?.stop();
     this.cancelCommentVisit();
     this.speaker.cancel();
+    if (this.state.camera !== 'off') this.stopCamera();
   }
 
   // ---------- settings ----------
   async updateSettings(patch: Partial<Settings>) {
     const prev = this.state.settings;
-    const next = { ...prev, ...patch };
+    const next = applySettings(prev, patch);
     if (this.env === 'stage') next.demo = true;
     this.set({ settings: next });
     if (!next.commentReactions || next.personality !== prev.personality || next.frequency !== prev.frequency) this.cancelCommentVisit();
@@ -217,12 +222,13 @@ export class Controller {
     const camWas = prev.enabled && prev.userCam;
     const camIs = next.enabled && next.userCam;
     if (!camWas && camIs) this.startCamera();
-    if (camWas && !camIs) this.stopCamera();
+    if (camWas && !camIs && this.state.camera !== 'off') this.stopCamera();
     if (camWas && camIs && prev.eyeTrack !== next.eyeTrack) {
       sendBg({ type: 'GAZE_ENABLE', enabled: next.eyeTrack }).catch(() => undefined);
       if (!next.eyeTrack) this.clearGaze();
     }
-    if (!prev.eyeTrack && next.eyeTrack && !this.state.gaze.calibrated) this.openGazeCalibration();
+    // A master wake can need camera permission first. Offer calibration in the menu instead of opening two tabs.
+    if (patch.eyeTrack === true && patch.enabled === undefined && next.enabled && !this.state.gaze.calibrated) this.openGazeCalibration();
     if (!prev.voice && next.voice === false) this.speaker.cancel();
     if (prev.voice && !next.voice) this.speaker.cancel();
     const demoWasOn = prev.demo && prev.enabled;
@@ -274,7 +280,7 @@ export class Controller {
     if (this.state.bubble || this.speaking) return { accepted: false, retryAfterMs: 500, hint: 'Finishing this reaction…' };
     if (!commentPosition(target, window.innerWidth, window.innerHeight)) return { accepted: false, hint: 'No room beside comments. Try a wider window.' };
     if (this.seenComments.has(target.text)) return { accepted: false, hint: 'Already read this one. Try a different comment.' };
-    if (this.seenComments.size >= 100) return { accepted: false, hint: 'Clear memory to read more comments on this Short.' };
+    if (this.seenComments.size >= 100) return { accepted: false, hint: 'Comment limit reached for this Short. Swipe to start fresh.' };
     // No wait between comment visits (no cooldown, no reading gap). A bubble still on screen is handled above.
     this.cancelCommentVisit();
     const requestId = newId();
@@ -391,7 +397,8 @@ export class Controller {
 
   private gazeActive(): boolean {
     const st = this.state.settings;
-    return st.enabled && st.userCam && st.eyeTrack && this.state.camera === 'on' && Date.now() - this.lastGazeAt < 1500;
+    return st.enabled && st.userCam && st.eyeTrack && this.state.gaze.calibrated &&
+      this.state.camera === 'on' && Date.now() - this.lastGazeAt < 1500;
   }
 
   private zoneRects() {
@@ -409,7 +416,7 @@ export class Controller {
   }
 
   private onGaze(fx: number, fy: number) {
-    if (!this.state.settings.eyeTrack || !this.state.settings.userCam) return;
+    if (!this.state.settings.eyeTrack || !this.state.settings.userCam || !this.state.gaze.calibrated) return;
     const now = Date.now();
     this.lastGazeAt = now;
     const scr = screen as Screen & { availLeft?: number };
@@ -460,10 +467,12 @@ export class Controller {
     const u = this.state.settings.userCam && this.state.camera === 'on' ? this.state.user : null;
     const zone = this.gazeActive() ? this.gazeDwell.zone : null;
     return {
-      userAway: (!!u && (u.lookingAway || !u.present)) || zone === 'off_screen',
+      // A drifting gaze model cannot overrule the camera seeing the viewer facing the screen.
+      // Only face/head signals establish absence; gaze is a softer attention hint.
+      userAway: !!u && (u.lookingAway || !u.present),
       userLaughing: !!u && u.expression === 'laughing',
       userReadingComments: zone === 'comments', // eyes on the comment panel: video reactions wait
-      userEyesElsewhere: zone === 'elsewhere', // eyes on another part of the page: wait until they're free
+      userEyesElsewhere: zone === 'elsewhere' || zone === 'off_screen',
     };
   }
 

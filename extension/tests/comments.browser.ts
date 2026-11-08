@@ -8,6 +8,8 @@ import type { BgRequest, CommentReactResponse } from '../src/shared/messages';
 // esbuild's text loader is used by the browser-test runner.
 // @ts-expect-error CSS is loaded as a string in this test bundle.
 import styles from '../src/content/styles.css';
+// @ts-expect-error CSS is loaded as a string in this test bundle.
+import orbitStyles from '../src/content/orbit.css';
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const assert = (condition: unknown, message: string) => { if (!condition) throw new Error(message); };
@@ -57,7 +59,7 @@ const host = document.createElement('div');
 host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483000';
 const shadow = host.attachShadow({ mode: 'open' });
 const style = document.createElement('style');
-style.textContent = styles;
+style.textContent = `${styles}\n${orbitStyles}`;
 shadow.append(style);
 const root = document.createElement('div'); shadow.append(root); document.body.append(host);
 const ctl = new Controller('youtube', host);
@@ -208,9 +210,9 @@ async function run() {
   await reset(); await select(first);
   const settings = latest().requestId;
   button.click(); await wait(50); reply(settings); await wait(100);
-  assert(shadow.querySelector('.sm-popover') && !ctl.state.commentVisit && !ctl.state.bubble, 'opening settings must cancel the visit');
+  assert(shadow.querySelector('.sm-orbit-menu') && !ctl.state.commentVisit && !ctl.state.bubble, 'opening settings must cancel the visit');
   document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true })); await wait(50);
-  assert(!shadow.querySelector('.sm-popover'), 'clicking outside must close settings and restore hover detection');
+  assert(!shadow.querySelector('.sm-orbit-menu'), 'clicking outside must close settings and restore hover detection');
 
   await reset();
   panel.style.width = '100vw';
@@ -230,10 +232,9 @@ async function run() {
   const disabled = latest().requestId;
   await ctl.updateSettings({ enabled: false }); reply(disabled); await wait(200);
   assert(!ctl.state.commentVisit && !ctl.state.bubble, 'disabling the companion cancels the visit');
-  await ctl.updateSettings({ enabled: true, commentReactions: false });
   hover(second); await wait(1100);
-  assert(!ctl.state.commentVisit, 'comment toggle must disable selection');
-  await ctl.updateSettings({ commentReactions: true });
+  assert(!ctl.state.commentVisit, 'sleeping buddy must disable comment selection');
+  await ctl.updateSettings({ enabled: true });
 
   await reset(); await select(second);
   const navigating = latest().requestId;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { gazeZone, RidgeGaze, screenToViewport, ZoneDwell } from '../src/shared/faceSignals';
-import { decide, type Candidate, type PlaybackSnapshot } from '../src/shared/timing';
+import { decide, GAZE_HOLD_MS, TimingEngine, type Candidate, type PlaybackSnapshot } from '../src/shared/timing';
 
 const vp = { w: 1500, h: 900 };
 const rects = {
@@ -66,4 +66,51 @@ test('timing: eyes on the comments hold a video reaction', () => {
   const verdict = decide(cand, snap, mem, { frequency: 'balanced', voiceEnabled: false }, 1000);
   assert.equal(verdict.decision, 'WAIT');
   assert.equal(verdict.code, 'user_reading_comments');
+});
+
+const liveReaction: Candidate = {
+  id: 'live', text: 'That turned out beautifully.', importance: 0.85, targetVideoId: 'v1', createdAt: 1000,
+  preferredTiming: 'now', expiresAfterSeconds: 8, requiresQuietMoment: false, isCallback: false,
+};
+const watching: PlaybackSnapshot = {
+  enabled: true, videoId: 'v1', playing: true, paused: false, ended: false, currentTime: 5,
+  duration: 30, lastLoopAt: null, muted: false, audioQuiet: null, navTimes: [],
+};
+
+test('drifting gaze briefly defers a live reel comment, then shows it before expiry', () => {
+  for (const attention of [{ userEyesElsewhere: true }, { userReadingComments: true }]) {
+    const engine = new TimingEngine({ frequency: 'balanced', voiceEnabled: true });
+    const snapshot = { ...watching, ...attention };
+    assert.equal(engine.propose(liveReaction, snapshot, 1000), null);
+    assert.equal(engine.tick(snapshot, 1000 + GAZE_HOLD_MS - 1), null);
+    const delivered = engine.tick(snapshot, 1000 + GAZE_HOLD_MS);
+    assert.equal(delivered?.candidate.id, liveReaction.id);
+    assert.equal(delivered?.mode, 'bubble');
+  }
+});
+
+test('uncertain gaze uses a silent bubble even when playback is paused and voice is enabled', () => {
+  const engine = new TimingEngine({ frequency: 'balanced', voiceEnabled: true });
+  const snapshot = { ...watching, playing: false, paused: true, userEyesElsewhere: true };
+  assert.equal(engine.propose(liveReaction, snapshot, 1000), null);
+  assert.equal(engine.tick(snapshot, 1000 + GAZE_HOLD_MS)?.mode, 'bubble');
+});
+
+test('confirmed absence and deliberate comment reading still hold reel reactions', () => {
+  for (const attention of [{ userAway: true }, { readingComments: true }, { commentRequestId: 'selected' }]) {
+    const engine = new TimingEngine({ frequency: 'balanced', voiceEnabled: true });
+    const snapshot = { ...watching, ...attention };
+    assert.equal(engine.propose(liveReaction, snapshot, 1000), null);
+    assert.equal(engine.tick(snapshot, 1000 + GAZE_HOLD_MS + 1), null);
+  }
+});
+
+test('Rare still filters ordinary lines and gaze recovery does not revive stale reel comments', () => {
+  const rare = new TimingEngine({ frequency: 'rare', voiceEnabled: true });
+  assert.equal(rare.propose({ ...liveReaction, importance: 0.65 }, watching, 1000), null);
+  assert.equal(rare.queue.length, 0);
+  const engine = new TimingEngine({ frequency: 'balanced', voiceEnabled: true });
+  assert.equal(engine.propose(liveReaction, { ...watching, userEyesElsewhere: true }, 1000), null);
+  assert.equal(engine.tick({ ...watching, videoId: 'next-reel' }, 1000 + GAZE_HOLD_MS), null);
+  assert.equal(engine.queue.length, 0);
 });
