@@ -1,0 +1,44 @@
+{
+  "kind": "scripted simulation",
+  "frequency": "balanced",
+  "sessions": 100,
+  "shortsPerSession": 20,
+  "generatedAt": "2026-11-08T10:54:47.855Z",
+  "oneSession": {
+    "seed": 7,
+    "shorts": 20,
+    "reactionsGenerated": 23,
+    "naive": {
+      "generated": 23,
+      "delivered": 23,
+      "interruptions": 10,
+      "stale": 2,
+      "duplicates": 1,
+      "callbacksDelivered": 12
+    },
+    "scrollmate": {
+      "generated": 23,
+      "delivered": 16,
+      "interruptions": 1,
+      "stale": 0,
+      "duplicates": 0,
+      "callbacksDelivered": 11
+    }
+  },
+  "average": {
+    "naive": {
+      "delivered": 17.8,
+      "interruptions": 9.3,
+      "stale": 2.7,
+      "duplicates": 1.3,
+      "callbacksDelivered": 7
+    },
+    "scrollmate": {
+      "delivered": 9.9,
+      "interruptions": 0.1,
+      "stale": 0,
+      "duplicates": 0,
+      "callbacksDelivered": 6.3
+    }
+  }
+}

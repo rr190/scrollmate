@@ -230,12 +230,15 @@ console.log(row('Naive', naive));
 console.log(row('ScrollMate', smart));
 
 // Aggregate over many sessions so one lucky seed can't carry the pitch.
-const agg = { naive: { delivered: 0, interruptions: 0, stale: 0, duplicates: 0 }, smart: { delivered: 0, interruptions: 0, stale: 0, duplicates: 0 } };
+const agg = {
+  naive: { delivered: 0, interruptions: 0, stale: 0, duplicates: 0, callbacksDelivered: 0 },
+  smart: { delivered: 0, interruptions: 0, stale: 0, duplicates: 0, callbacksDelivered: 0 },
+};
 for (let k = 0; k < nSessions; k++) {
   const s = generateSession(1000 + k, nShorts);
   const a = runNaive(s);
   const b = runScrollMate(s, frequency);
-  for (const key of ['delivered', 'interruptions', 'stale', 'duplicates'] as const) {
+  for (const key of ['delivered', 'interruptions', 'stale', 'duplicates', 'callbacksDelivered'] as const) {
     agg.naive[key] += a[key];
     agg.smart[key] += b[key];
   }
@@ -251,3 +254,17 @@ console.log(
     `ScrollMate interrupted it ${smart.interruptions} times, and testers rated X% of its reactions funny."`,
 );
 console.log('  (X comes from eval/rating_sheet.md once 5 testers have filled it in.)\n');
+
+// Saved for the backend /ui "Knowing when to talk" panel (scripted simulation, not user testing).
+// Averages use the same rounding (toFixed(1)) as the printed table.
+const per = (m: typeof agg.naive) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, Number((v / nSessions).toFixed(1))]));
+writeFileSync(new URL('./results.json', import.meta.url), JSON.stringify({
+  kind: 'scripted simulation',
+  frequency,
+  sessions: nSessions,
+  shortsPerSession: nShorts,
+  generatedAt: new Date().toISOString(),
+  oneSession: { seed, shorts: session.shorts.length, reactionsGenerated: naive.generated, naive, scrollmate: smart },
+  average: { naive: per(agg.naive), scrollmate: per(agg.smart) },
+}, null, 2));
+console.log('Saved eval/results.json (shown in the backend /ui).');

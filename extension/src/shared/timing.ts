@@ -45,6 +45,8 @@ export interface PlaybackSnapshot {
 export interface EngineOptions {
   frequency: Frequency;
   voiceEnabled: boolean;
+  /** Set in the backend /ui: how interesting a moment must be before speaking (overrides the frequency's bar). */
+  minImportance?: number | null;
 }
 
 export const COOLDOWN_MS: Record<Frequency, number> = { rare: 45_000, balanced: 20_000, chatty: 12_000 };
@@ -161,9 +163,9 @@ export function decide(
     return v('SPEAK_NOW', 'selected_comment', 'reacting beside the visible selected comment', 'bubble');
   }
 
-  const minImp = MIN_IMPORTANCE[opts.frequency];
+  const minImp = opts.minImportance ?? MIN_IMPORTANCE[opts.frequency];
   if (c.importance < minImp)
-    return v('STAY_SILENT', 'low_importance', `importance ${c.importance.toFixed(2)} < ${minImp} for "${opts.frequency}"`);
+    return v('STAY_SILENT', 'low_importance', `importance ${c.importance.toFixed(2)} < ${minImp} ${opts.minImportance != null ? '(set in /ui)' : `for "${opts.frequency}"`}`);
 
   const onScreen = s.videoId === c.targetVideoId;
   if (!onScreen && !c.isCallback)

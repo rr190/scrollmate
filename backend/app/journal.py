@@ -187,6 +187,12 @@ class Journal:
         """Least recently used of the moves that make sense now; never the same twice in a row,
         a question at most once in every 3 lines, 'connect' only with something real to connect to."""
         hist = self.move_history
+        from . import config  # lazy: config never imports the journal, but keep this module standalone
+
+        cur = self.entries.get(video_id)
+        if config.DEMO_MODE and self.has_connectable(video_id) and not (cur and cur.lines):
+            # Demo mode: the first line on a new Short remembers an earlier one, so the callback always shows.
+            return "connect"
         options = ["own_feeling", "invite"]
         if self.has_connectable(video_id):
             options.append("connect")

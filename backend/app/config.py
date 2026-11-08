@@ -148,6 +148,7 @@ def current_models() -> dict:
         "frames": FRAMES,
         "audience": f"{AUDIENCE_MIN}-{AUDIENCE_MAX}",
         "demo_mode": DEMO_MODE,
+        "min_importance": MIN_IMPORTANCE,
     }
 
 
@@ -172,6 +173,20 @@ def set_frames(value: str) -> None:
 
 # Demo mode (for presenting): every Short gets a comment, feelings are noticed sooner, "looked away" doesn't hold lines.
 DEMO_MODE = _bool("SCROLLMATE_DEMO_MODE", False)
+
+
+# How interesting a moment must be before the buddy speaks (0-1). None = follow the Rare/Balanced/Chatty setting.
+FREQUENCY_THRESHOLD = {"rare": 0.75, "balanced": 0.55, "chatty": 0.4}
+MIN_IMPORTANCE: float | None = None
+
+
+def set_min_importance(value: float | None) -> None:
+    global MIN_IMPORTANCE
+    MIN_IMPORTANCE = value
+
+
+def importance_threshold(frequency: str) -> float:
+    return MIN_IMPORTANCE if MIN_IMPORTANCE is not None else FREQUENCY_THRESHOLD.get(frequency, 0.55)
 
 
 def set_demo(on: bool) -> None:

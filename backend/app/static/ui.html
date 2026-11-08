@@ -123,7 +123,8 @@
   <h1>ScrollMate backend playground</h1>
   <div class="status" id="status"><span class="dot" id="dot"></span> checking /health…</div>
   <button class="small" id="refreshHealth">Refresh</button>
-  <a href="/ui/face" style="margin-left:auto;color:var(--accent);font-weight:600;text-decoration:none">📷 Webcam test</a>
+  <a href="/ui/eval" target="_blank" style="margin-left:auto;color:var(--accent);font-weight:600;text-decoration:none">📊 Knowing when to talk</a>
+    <a href="/ui/face" style="color:var(--accent);font-weight:600;text-decoration:none">📷 Webcam test</a>
 </header>
 
 <main>
@@ -153,6 +154,16 @@
         <span style="display:flex;align-items:center;gap:6px">from <input type="number" id="mAgeLo" min="3" max="14" style="width:64px">
         to <input type="number" id="mAgeHi" min="3" max="14" style="width:64px"></span></div>
       <div class="note" style="align-self:end">The buddy talks to a child this age in every feature: words, jokes and topics follow it. Applies to the next line.</div>
+    </div>
+    <div class="row" style="max-width:620px">
+      <div><label for="mImp">When to react: <b id="mImpVal">follow Rare / Balanced / Chatty</b></label>
+        <span style="display:flex;align-items:center;gap:8px">
+          <label class="check" style="margin:0"><input type="checkbox" id="mImpOn"> custom</label>
+          <input type="range" id="mImp" min="0.2" max="0.95" step="0.05" value="0.55" style="flex:1" disabled>
+        </span></div>
+      <div class="note" style="align-self:end">How interesting a moment must be before the buddy speaks. Lower = chattier.
+        ~0.4 reacts to most moments, 0.65 lets normal comment lines through, 0.9+ only big moments. Comment replies,
+        feeling lines and talk are not affected.</div>
     </div>
     <label class="check"><input type="checkbox" id="mDemo"> 🎬 Demo mode (for presenting): every Short gets a comment, feelings are noticed
       sooner, and glancing away doesn't hold lines back. Applies from the next frame.</label>
@@ -516,6 +527,11 @@ async function loadModels(view) {
   const [ageLo, ageHi] = String(cur.audience || '5-9').split('-');
   $('mAgeLo').value = ageLo; $('mAgeHi').value = ageHi || ageLo;
   $('mDemo').checked = !!cur.demo_mode;
+  const imp = cur.min_importance;
+  $('mImpOn').checked = imp !== null && imp !== undefined;
+  $('mImp').disabled = !$('mImpOn').checked;
+  if ($('mImpOn').checked) $('mImp').value = imp;
+  $('mImpVal').textContent = $('mImpOn').checked ? `${Number($('mImp').value).toFixed(2)}` : 'follow Rare / Balanced / Chatty';
   $('knownModels').innerHTML = view.knownModels.map((m) => `<option value="${esc(m)}">${view.textOnly.includes(m) ? 'text only' : ''}</option>`).join('');
   $('modelsState').textContent = view.mock ? 'MOCK mode: no LLM calls are made' : (view.activePreset ? `preset: ${view.presets[view.activePreset].label}` : 'custom');
 }
@@ -540,6 +556,9 @@ $('mFrames').onchange = () => applyModels({ frames: $('mFrames').value });
 const applyAge = () => applyModels({ audience: `${$('mAgeLo').value}-${$('mAgeHi').value}` });
 $('mAgeLo').onchange = applyAge;
 $('mDemo').onchange = () => applyModels({ demo_mode: $('mDemo').checked });
+$('mImpOn').onchange = () => applyModels({ min_importance: $('mImpOn').checked ? Number($('mImp').value) : -1 });
+$('mImp').oninput = () => { $('mImpVal').textContent = Number($('mImp').value).toFixed(2); };
+$('mImp').onchange = () => applyModels({ min_importance: Number($('mImp').value) });
 $('mAgeHi').onchange = applyAge;
 $('mPing').onclick = async () => {
   const btn = $('mPing');

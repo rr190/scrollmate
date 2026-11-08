@@ -11,6 +11,7 @@ Frames are used for the single LLM call and never stored or logged.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -193,6 +194,12 @@ _FACE_FILES = {
     "faceSignals.js": Path(__file__).resolve().parent / "static" / "faceSignals.js",  # built from extension/src/shared/faceSignals.ts
 }
 _FACE_TYPES = {".mjs": "text/javascript", ".js": "text/javascript", ".wasm": "application/wasm", ".task": "application/octet-stream"}
+
+
+@app.get("/ui/eval", include_in_schema=False)
+async def ui_eval():
+    """'Knowing when to talk': the timing evaluation, on its own page for presenting."""
+    return FileResponse(Path(__file__).resolve().parent / "static" / "eval.html", media_type="text/html")
 
 
 @app.get("/ui/face", include_in_schema=False)
@@ -747,6 +754,7 @@ async def swipe(req: SwipeRequest, request: Request) -> SwipeResponse:
     elif not req.title:
         path = "no title yet"
     out.demo_mode = config.DEMO_MODE
+    out.min_importance = config.MIN_IMPORTANCE
     feed.publish(
         "swipe_result",
         videoId=req.video_id,
@@ -863,7 +871,7 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
         out.final = req.frame_index >= max_frames
         out.next_capture_at = None if out.final else req.frame_time + 3
 
-    threshold = {"rare": 0.75, "balanced": 0.55, "chatty": 0.4}[req.frequency]
+    threshold = config.importance_threshold(req.frequency)  # /ui override, else the frequency setting
     # A line the selected frequency will discard is not a successfully proposed comment.
     out.reactions = [candidate for candidate in out.reactions if candidate.importance >= threshold]
     for c in out.reactions:
@@ -910,6 +918,7 @@ async def observe(req: ObserveRequest, request: Request) -> ObserveResponse:
     b.comments_proposed += len(out.reactions)
 
     out.demo_mode = config.DEMO_MODE
+    out.min_importance = config.MIN_IMPORTANCE
     feed.publish(
         "observe_result",
         videoId=req.video_id,
@@ -943,6 +952,7 @@ class ModelSettings(BaseModel):
     frames: str | None = None  # "auto" or "1".."12"
     audience: str | None = None  # the child's age range, e.g. "5-9"
     demo_mode: bool | None = None  # presenting: guaranteed comments, faster feelings, no "looked away" holds
+    min_importance: float | None = None  # 0-1 reaction threshold; a negative value clears it (back to the frequency setting)
 
 
 def _provider_key(model: str | None) -> str | None:
@@ -1015,6 +1025,13 @@ async def set_settings(body: ModelSettings) -> dict:
     race_text = body.race_text if body.race_text is not None else cur["race_text"]
     if body.demo_mode is not None:
         config.set_demo(bool(body.demo_mode))
+    if body.min_importance is not None:
+        if body.min_importance < 0:
+            config.set_min_importance(None)
+        elif body.min_importance <= 1:
+            config.set_min_importance(round(body.min_importance, 2))
+        else:
+            raise HTTPException(400, "min_importance must be between 0 and 1 (or negative to use the frequency setting)")
     if body.audience is not None:
         try:
             lo, hi = config.parse_audience(body.audience)
@@ -1068,6 +1085,42 @@ def _journal_event(kind: str, data: dict) -> None:
         journal.add_line(vid, data["text"], data.get("move") if isinstance(data.get("move"), str) else None)
     elif kind == "user" and data.get("present") is not False and not data.get("lookingAway"):
         journal.add_feeling(vid, data.get("expression") if isinstance(data.get("expression"), str) else None)
+
+
+# ---------- "Knowing when to talk": the timing evaluation (scripted simulation, eval/timing_eval.ts) ----------
+_EVAL_RESULTS = Path(__file__).resolve().parents[2] / "eval" / "results.json"
+_EXTENSION_DIR = Path(__file__).resolve().parents[2] / "extension"
+
+
+@app.get("/scrollmate/eval", include_in_schema=False)
+async def eval_results() -> dict:
+    """The latest saved evaluation (written by `npm run eval` in extension/)."""
+    if not _EVAL_RESULTS.exists():
+        raise HTTPException(404, "No results yet: run `npm run eval` in extension/ (or press Run again).")
+    return json.loads(_EVAL_RESULTS.read_text(encoding="utf-8"))
+
+
+@app.post("/scrollmate/eval/run", include_in_schema=False)
+async def eval_run() -> dict:
+    """Re-run the simulation (about 10-20 s) and return the fresh results."""
+    import shutil
+
+    node = shutil.which("node")
+    cli = _EXTENSION_DIR / "node_modules" / "tsx" / "dist" / "cli.mjs"
+    if not node or not cli.exists():
+        raise HTTPException(503, "Node and the extension's dependencies are needed: run `npm install` in extension/.")
+    proc = await asyncio.create_subprocess_exec(
+        node, str(cli), "../eval/timing_eval.ts", cwd=str(_EXTENSION_DIR),
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        _, err = await asyncio.wait_for(proc.communicate(), timeout=90)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise HTTPException(504, "The evaluation took too long.")
+    if proc.returncode != 0:
+        raise HTTPException(500, f"The evaluation failed: {err.decode(errors='replace')[-300:]}")
+    return await eval_results()
 
 
 @app.get("/scrollmate/journal", include_in_schema=False)

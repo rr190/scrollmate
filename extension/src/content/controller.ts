@@ -485,8 +485,18 @@ export class Controller {
     if (!res.reactions?.length) attempt.expiresAt = Math.min(attempt.expiresAt, now + 2500);
   }
 
+  private minImportance: number | null = null; // from the backend /ui (null = follow the frequency setting)
+
   private applyEngineOpts() {
-    this.engine.opts = { frequency: this.state.settings.frequency, voiceEnabled: this.state.settings.voice };
+    this.engine.opts = { frequency: this.state.settings.frequency, voiceEnabled: this.state.settings.voice, minImportance: this.minImportance };
+  }
+
+  private setMinImportance(value: number | null | undefined) {
+    if (value === undefined) return; // an older backend that doesn't send it
+    if (value === this.minImportance) return;
+    this.minImportance = value;
+    this.applyEngineOpts();
+    console.log(LOG, value === null ? 'reaction threshold: following the frequency setting' : `reaction threshold set in /ui: ${value}`);
   }
 
   /** Stop all processing immediately. */
@@ -939,6 +949,7 @@ export class Controller {
         frequency: this.state.settings.frequency,
       });
       this.setDemoMode(res?.demoMode);
+      this.setMinImportance(res?.minImportance);
       // Frames are more trustworthy than the title: never overwrite a face from frame analysis.
       if (!this.isCurrent(ctx) || ctx.frameCount > 0 || !res?.emotion) return;
       if (res.emotion !== rule.emotion) this.showFace(ctx, res.emotion, 0.6, 'title AI');
@@ -1088,6 +1099,7 @@ export class Controller {
       });
       if (!this.isCurrent(ctx)) return;
       this.setDemoMode(res?.demoMode);
+      this.setMinImportance(res?.minImportance);
       if (typeof res?.maxFrames === 'number' && res.maxFrames > 0) ctx.maxFrames = res.maxFrames;
       if (!res || res.error) {
         // The backend answered but its vision model missed this frame: handled by retrying, so not an extension error.

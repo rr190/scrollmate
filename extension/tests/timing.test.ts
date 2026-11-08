@@ -43,3 +43,18 @@ test('the log total keeps counting after the log is trimmed or cleared', () => {
   e.propose(cand({ importance: 0.01 }), snap(), 0);
   assert.equal(e.logTotal, 1101);
 });
+
+test('a reaction threshold set in /ui overrides the frequency bar', async () => {
+  const { decide } = await import('../src/shared/timing');
+  const snap = {
+    enabled: true, videoId: 'v1', playing: true, paused: false, ended: false, currentTime: 5, duration: 30, lastLoopAt: null,
+    muted: false, audioQuiet: true, navTimes: [],
+  };
+  const cand = { id: 'c', text: 'ha', importance: 0.65, targetVideoId: 'v1', createdAt: 0, preferredTiming: 'now',
+    expiresAfterSeconds: 60, requiresQuietMoment: false, isCallback: false } as never;
+  const mem = () => ({ lastSpokeAt: null, lastSpokeVideo: null, deliveredTexts: new Set<string>(), deliveredPerVideo: new Map<string, number>() });
+  const code = (opts: object) => decide(cand, snap as never, mem() as never, { frequency: 'chatty', voiceEnabled: false, ...opts } as never, 1000).code;
+  assert.notEqual(code({}), 'low_importance', 'chatty lets 0.65 through');
+  assert.equal(code({ minImportance: 0.8 }), 'low_importance', 'the /ui threshold is stricter');
+  assert.notEqual(code({ minImportance: 0.5, frequency: 'rare' }), 'low_importance', 'a lower /ui threshold beats Rare');
+});

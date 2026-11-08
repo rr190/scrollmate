@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Knowing When To Talk</title>
+<style>
+  :root {
+    --bg: #f7f5fb; --panel: #ffffff; --ink: #251d33; --muted: #6c6380; --line: #e6e0f0;
+    --accent: #7c5ce0; --accent-soft: #efe9ff; --bad: #d23b4b; --code: #f3f0f8; --naive: #c9c2d6; color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #15121c; --panel: #1f1a29; --ink: #efeaf7; --muted: #a69cb8; --line: #332b42;
+      --accent: #a58bff; --accent-soft: #2c2440; --bad: #ff6b7a; --code: #191522; --naive: #4a4258; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --bg: #15121c; --panel: #1f1a29; --ink: #efeaf7; --muted: #a69cb8; --line: #332b42;
+    --accent: #a58bff; --accent-soft: #2c2440; --bad: #ff6b7a; --code: #191522; --naive: #4a4258; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  header a { margin-left: auto; color: var(--accent); font-weight: 600; text-decoration: none; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 40px; }
+  .kicker { color: var(--accent); font-weight: 700; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; }
+  .quote { font-size: clamp(24px, 3.4vw, 40px); font-weight: 800; line-height: 1.15; margin: 6px 0 10px; }
+  .lead { color: var(--muted); max-width: 70ch; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; margin: 24px 0 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  .card h3 { margin: 0 0 4px; font-size: 16px; }
+  .card .hint { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .bar { display: grid; grid-template-columns: 70px 1fr 52px; align-items: center; gap: 10px; margin: 8px 0; }
+  .track { height: 26px; border-radius: 8px; background: var(--code); overflow: hidden; }
+  .fill { height: 100%; border-radius: 8px; transition: width .7s ease; }
+  .fill.naive { background: var(--naive); }
+  .fill.esu { background: var(--accent); }
+  .bar b { text-align: right; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .foot { color: var(--muted); font-size: 14px; }
+  .foot b { color: var(--ink); }
+  button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .err { color: var(--bad); }
+  @media (prefers-reduced-motion: reduce) { .fill { transition: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>ScrollMate · Knowing when to talk</h1>
+  <button id="run">Run again</button>
+  <a href="/ui">← Back to the playground</a>
+</header>
+<main>
+  <div class="kicker" id="meta">Timing evaluation</div>
+  <div class="quote">We didn't build an AI that talks more. We built one that knows <i>when</i> to talk.</div>
+  <div class="lead">Same AI reactions, two ways of delivering them. <b>Naive</b> says every line the moment it arrives.
+    <b>ESu</b> uses the deterministic timing engine: natural pauses, never over the video or another line, and stale or repeated lines dropped.</div>
+  <div class="cards" id="cards"><div class="card">Loading…</div></div>
+  <div class="foot" id="foot"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const METRICS = [
+  ['interruptions', 'Talked over the video', 'lower is better'],
+  ['stale', 'Too late (the Short was already gone)', 'lower is better'],
+  ['duplicates', 'Said the same thing twice', 'lower is better'],
+  ['callbacksDelivered', 'Remembered earlier Shorts', 'kept: the personality stays'],
+];
+function render(d) {
+  const a = d.average;
+  $('meta').textContent = `Timing evaluation · ${d.kind} · average of ${d.sessions} sessions × ${d.shortsPerSession} Shorts`;
+  $('cards').innerHTML = METRICS.map(([k, label, hint]) => {
+    const n = a.naive[k] ?? 0, e = a.scrollmate[k] ?? 0, max = Math.max(n, e, 0.001);
+    const bar = (cls, name, v) => `<div class="bar"><span>${name}</span><span class="track"><span class="fill ${cls}" style="width:${(v / max) * 100}%"></span></span><b>${v}</b></div>`;
+    return `<div class="card"><h3>${label}</h3><div class="hint">${hint}</div>${bar('naive', 'Naive', n)}${bar('esu', 'ESu', e)}</div>`;
+  }).join('');
+  const one = d.oneSession;
+  $('foot').innerHTML = `One example session: Naive talked over the video <b>${one.naive.interruptions}</b> times, ESu <b>${one.scrollmate.interruptions}</b>,
+    while remembering earlier Shorts ${one.scrollmate.callbacksDelivered} vs ${one.naive.callbacksDelivered} times.<br>
+    Scripted simulation of viewing sessions (skips, full watches, pauses), not user testing. Updated ${esc(new Date(d.generatedAt).toLocaleString())}.`;
+}
+async function load(method, path) {
+  const res = await fetch(path, { method });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(typeof data?.detail === 'string' ? data.detail : `HTTP ${res.status}`);
+  return data;
+}
+load('GET', '/scrollmate/eval').then(render).catch((e) => { $('cards').innerHTML = `<div class="card err">${esc(e.message)}</div>`; });
+$('run').onclick = async () => {
+  $('run').disabled = true; $('run').textContent = 'Running…';
+  try { render(await load('POST', '/scrollmate/eval/run')); } catch (e) { $('cards').innerHTML = `<div class="card err">${esc(e.message)}</div>`; }
+  $('run').disabled = false; $('run').textContent = 'Run again';
+};
+</script>
+</body>
+</html>

@@ -113,6 +113,7 @@ export interface CommentReactResponse {
 }
 export interface SwipeResponse {
   demoMode?: boolean;
+  minImportance?: number | null; // /ui reaction threshold (null = frequency setting)
   momentType: string;
   emotion: Emotion | null;
   level: number;
@@ -121,6 +122,7 @@ export interface SwipeResponse {
 }
 export interface ObserveResponse {
   demoMode?: boolean;
+  minImportance?: number | null; // /ui reaction threshold (null = frequency setting)
   emotion: Emotion | null;
   level: number;
   change: 'none' | 'minor' | 'major';

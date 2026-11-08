@@ -20,6 +20,37 @@ def watched(j: Journal, vid: str, topic: str, feelings: list[str], line: str | N
         j.add_line(vid, line, move)
 
 
+class DemoCallbackTests(unittest.TestCase):
+    def test_demo_mode_opens_each_new_short_with_a_callback(self):
+        from app import config
+        j = Journal()
+        watched(j, "a", "puppies", ["laughing"], "Puppies make my sprout wiggle!", "own_feeling")
+        j.start("b", "I am your doggy")
+        old = config.DEMO_MODE
+        try:
+            config.DEMO_MODE = True
+            self.assertEqual(j.next_move("b", False), "connect")
+            j.add_line("b", "You laughed at the puppy before!", "connect")
+            self.assertNotEqual(j.next_move("b", False), "connect", "only the first line is forced")
+            config.DEMO_MODE = False
+            j.start("c", "another")
+            j.move_history.append("connect")
+            self.assertNotEqual(j.next_move("c", False), "connect", "normal rotation when demo is off")
+        finally:
+            config.DEMO_MODE = old
+
+    def test_demo_mode_never_forces_a_callback_with_nothing_to_remember(self):
+        from app import config
+        j = Journal()
+        j.start("first", "first ever")
+        old = config.DEMO_MODE
+        try:
+            config.DEMO_MODE = True
+            self.assertNotEqual(j.next_move("first", False), "connect")
+        finally:
+            config.DEMO_MODE = old
+
+
 class JournalTests(unittest.TestCase):
     def test_compact_lists_earlier_shorts_and_patterns(self):
         j = Journal()

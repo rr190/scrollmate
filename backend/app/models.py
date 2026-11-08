@@ -256,6 +256,7 @@ class SwipeResponse(Camel):
     level: int = 0  # 0 = nothing, 1 = face only (the swipe step never speaks)
     look_for: str = ""
     demo_mode: bool = False  # tells the extension to use its demo rules
+    min_importance: float | None = None  # /ui override of the reaction threshold (None = frequency setting)
 
 
 # ---------- observe step: one frame at a time, evolving belief ----------
@@ -329,4 +330,5 @@ class ObserveResponse(Camel):
     error: str | None = None
     max_frames: int = 3  # effective limit for this Short (from the /ui setting)
     demo_mode: bool = False  # tells the extension to use its demo rules
+    min_importance: float | None = None  # /ui override of the reaction threshold (None = frequency setting)
     record: MemoryItem  # what goes into the 3-Short memory if this Short ends now
